@@ -1,0 +1,10 @@
+{
+  "name": "BDM Live Coach",
+  "short_name": "Live Coach",
+  "lang": "pl-PL",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1118",
+  "theme_color": "#0b1118",
+  "description": "Dyskretny coach rozmów sprzedażowych eRecruiter."
+}
