@@ -40,6 +40,12 @@ W paczce ZIP znajdują się źródła (`src`), funkcja API (`functions`), `packa
 
 Klucz API jest przechowywany jako sekret Cloudflare Pages i nigdy nie jest wysyłany do przeglądarki. Krótkie fragmenty dźwięku są przesyłane do Workers AI, gdy powiązanie `AI` jest dostępne. Ostatnie wypowiedzi i krótka pamięć spotkania trafiają do DeepSeek tylko po wykryciu ważnego sygnału. Aplikacja nie używa konta, logowania, tokenu sesji ani browser storage i nie zapisuje kontekstu do bazy; ustawienia retencji dostawców mogą mieć zastosowanie. Jeśli wymagane jest, by żaden dostawca zewnętrzny nie otrzymał audio ani tekstu, nie używaj tej wersji online.
 
+## Wcześniejsze rozmowy jako pomoc w coachingu
+
+`lib/reference-patterns.js` zawiera krótką, anonimową analizę powtarzających się sytuacji z wcześniejszych spotkań: typ reakcji klienta, ryzyko w reakcji BDM i możliwy kolejny ruch. Po wykryciu ważnego sygnału serwer wybiera maksymalnie dwie pasujące analogie i przekazuje je DeepSeek razem z bieżącymi wypowiedziami. Bieżąca rozmowa ma pierwszeństwo; analogie nie są dowodem na potrzeby aktualnego klienta ani na funkcje eRecruitera.
+
+Surowe transkrypcje, nazwiska, nazwy firm i dane kontaktowe **nie są częścią aplikacji ani paczki wdrożeniowej**. Nie dodawaj ich do publicznego repozytorium GitHub. W tej wersji nie ma formularza wgrywania nowych rozmów: aby dodać kolejny sprawdzony wzorzec, zanonimizuj go, dopisz do `lib/reference-patterns.js` i zatwierdź zmianę w repozytorium. Cloudflare wdroży aktualizację automatycznie. Biblioteka jest jawna dla osób mających dostęp do kodu repozytorium, dlatego powinna zawierać tylko ogólne obserwacje.
+
 ## Pierwsze wdrożenie i klucz serwerowy
 
 Klucz ustawia się jako sekret projektu (najlepiej przed pierwszym uruchomieniem). Z katalogu `web` uruchom:

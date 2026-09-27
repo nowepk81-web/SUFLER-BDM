@@ -55,6 +55,8 @@ Użytkownicy nie muszą mieć kont Cloudflare, GitHub ani DeepSeek i nie wpisuj�
 
 Każdy commit do gałęzi produkcyjnej (np. `main`) uruchomi nowy build i deploy. Inne gałęzie mogą tworzyć wdrożenia Preview.
 
+Anonimowe wzorce z wcześniejszych rozmów są w `lib/reference-patterns.js`. Zmiana tego pliku i commit również uruchamia aktualizację. Do repozytorium nie wgrywaj surowych transkrypcji ani pliku `BDM_REFERENCE_TRANSCRIPTS.md`: zawierają dane klientów, a repozytorium może być publiczne.
+
 ## Dane i prywatność
 
 Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy go nie ma, usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.
