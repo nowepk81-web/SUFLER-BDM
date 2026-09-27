@@ -21,7 +21,7 @@ W tym wariancie Cloudflare buduje aplikację z repozytorium. Na komputerze nie t
    - Build command: `npm run build`,
    - Build output directory: `dist`,
    - Root directory: `/` (domyślna; repozytorium ma zawierać bezpośrednio pliki z folderu `web`).
-4. Kliknij **Save and Deploy**. Cloudflare zainstaluje zależności i zbuduje stronę. Funkcja `/api/coach` znajduje się w `functions/api/coach.js` i zostanie wdrożona razem z Pages.
+4. Kliknij **Save and Deploy**. Cloudflare zainstaluje zależności i zbuduje stronę. Funkcje `/api/coach` i `/api/transcribe` zostaną wdrożone razem z Pages.
 
 ## 3. Dodaj klucz DeepSeek jako sekret
 
@@ -34,11 +34,20 @@ Po utworzeniu projektu otwórz **Workers & Pages → bdm-live-coach → Settings
 
 Sekret jest dostępny tylko dla funkcji serwerowej. Nie dodawaj go jako zmiennej `VITE_*`, do `src/`, do GitHub Secrets (nie są tu potrzebne) ani do repozytorium.
 
-## 4. Sprawdź działanie
+## 4. Włącz transkrypcję Cloudflare
+
+Plik `wrangler.toml` zawiera powiązanie Workers AI o nazwie `AI`. Po wdrożeniu wejdź w **Workers & Pages → sufler-bdm → Settings → Bindings** i sprawdź, czy widnieje tam Workers AI `AI`. Jeśli nie, dodaj je ręcznie: **Add → Workers AI**, nazwa `AI`, następnie uruchom nowy deploy. [Instrukcja Cloudflare](https://developers.cloudflare.com/pages/functions/bindings/#workers-ai).
+
+Po otwarciu `https://sufler-bdm.pages.dev/api/transcribe` powinien pojawić się tekst `{"available":true}`. Jeśli jest `false`, aplikacja użyje usługi rozpoznawania mowy przeglądarki, która u niektórych użytkowników zgłasza błąd `network`.
+
+Workers AI nalicza użycie modelu rozpoznawania mowy; Cloudflare opisuje dzienny darmowy przydział i stawki na [stronie cen](https://developers.cloudflare.com/workers-ai/platform/pricing/). Publiczne endpointy `/api/transcribe` i `/api/coach` warto objąć limitami żądań w Cloudflare.
+
+## 5. Sprawdź działanie
 
 1. Otwórz domenę `*.pages.dev` pokazaną w Cloudflare.
 2. Zezwól przeglądarce na mikrofon i uruchom nasłuch.
-3. Jeśli pojawi się błąd, sprawdź w Cloudflare, czy sekret `DEEPSEEK_API_KEY` został zapisany dla właściwego środowiska i czy konto DeepSeek może wykonywać zapytania.
+3. Po około 5 sekundach mówienia otwórz **Pokaż kontekst** i sprawdź, czy pojawia się tekst. Status pod przyciskiem pokaże, która usługa rozpoznaje mowę.
+4. Jeśli tekst jest widoczny, ale nie ma porad, sprawdź sekret `DEEPSEEK_API_KEY` i konto DeepSeek. Porady pojawiają się tylko po istotnym sygnale w rozmowie.
 
 Użytkownicy nie muszą mieć kont Cloudflare, GitHub ani DeepSeek i nie wpisują klucza. Każdy posiadający adres może używać publicznej aplikacji. Bez logowania nie da się całkowicie powstrzymać obcych osób przed wywoływaniem API, więc ustaw limity wydatków/powiadomienia DeepSeek oraz dostępne w planie reguły rate limiting Cloudflare.
 
@@ -48,4 +57,4 @@ Każdy commit do gałęzi produkcyjnej (np. `main`) uruchomi nowy build i deploy
 
 ## Dane i prywatność
 
-Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Tekst rozpoznany przez przeglądarkę jest wysyłany do funkcji Cloudflare, a następnie do DeepSeek. Usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Nie można zagwarantować braku retencji po stronie tych dostawców.
+Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy go nie ma, usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.

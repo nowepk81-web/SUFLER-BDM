@@ -1,7 +1,7 @@
 // Keep the latest utterance even when it arrives during a request or cooldown.
 export function createAnalysisQueue(run, {
   now = Date.now, schedule = setTimeout, cancel = clearTimeout,
-  interval = 12000, pause = 1200,
+  interval = 4000, pause = 850,
 } = {}) {
   let timer, pending = '', previous = '', last = -Infinity, busy = false, stopped = false;
   function arm(delay) {
