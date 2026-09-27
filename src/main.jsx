@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { Activity, ArrowRight, Check, ChevronDown, CircleHelp, Mic, MicOff, Radio, RotateCcw, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import './styles.css';
+import { createAnalysisQueue } from './analysis-queue.js';
 
 const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Naciśnij „Rozpocznij nasłuchiwanie”, gdy spotkanie się zacznie.', reason: 'Słucham tylko po uruchomieniu i za Twoją zgodą.', priority: 'LOW' }] };
 
@@ -44,13 +45,36 @@ function App() {
   const displayedMessage = useRef('');
   const requestGeneration = useRef(0);
   const requestInFlight = useRef(false);
+  const analysisQueue = useRef(null);
+  const interimRef = useRef('');
+  const displayTimer = useRef(null);
+  const pendingSuggestion = useRef(null);
+  const finalResultCount = useRef(0);
+  const recentFinals = useRef([]);
+  const restartTimer = useRef(null);
+  const restartAttempts = useRef(0);
 
   // Keep the entire card, including its quote, stable while the user reads.
   const showSuggestion = useCallback((next) => {
     const message = next.cards?.[0]?.message;
-    if (!message || message === displayedMessage.current) return;
+    if (!message) return;
+    if (message === displayedMessage.current) {
+      clearTimeout(displayTimer.current); pendingSuggestion.current = null; return;
+    }
     const now = Date.now();
-    if (displayedAt.current && now - displayedAt.current < 30000) return;
+    if (displayedAt.current && now - displayedAt.current < 30000) {
+      pendingSuggestion.current = next;
+      clearTimeout(displayTimer.current);
+      displayTimer.current = setTimeout(() => {
+        const latest = pendingSuggestion.current;
+        pendingSuggestion.current = null;
+        if (!latest || endByUser.current) return;
+        displayedAt.current = Date.now();
+        displayedMessage.current = latest.cards[0].message;
+        setState(latest);
+      }, 30000 - (now - displayedAt.current));
+      return;
+    }
     displayedAt.current = now;
     displayedMessage.current = message;
     setState(next);
@@ -61,13 +85,14 @@ function App() {
 
   const askApi = useCallback(async (context) => {
     const now = Date.now();
-    if (requestInFlight.current || now - lastRequest.current < 12000) return;
-    if (displayedAt.current && now - displayedAt.current < 30000) return;
     lastRequest.current = now;
     requestInFlight.current = true;
     const generation = requestGeneration.current;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    setApiMode('Analizuję wypowiedź…');
     try {
-      const response = await fetch('/api/coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context }) });
+      const response = await fetch('/api/coach', { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context }) });
       if (!response.ok) {
         const problem = await response.json().catch(() => ({}));
         if (generation !== requestGeneration.current) return;
@@ -84,6 +109,7 @@ function App() {
       setApiMode('Reguły lokalne · brak połączenia');
       showSuggestion(localCoach(context.slice(-1200)));
     } finally {
+      clearTimeout(timeout);
       if (generation === requestGeneration.current) requestInFlight.current = false;
     }
   }, [showSuggestion]);
@@ -91,38 +117,80 @@ function App() {
   const onResult = useCallback((event) => {
     if (endByUser.current) return;
     let finalChunk = '';
-    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+    let interim = '';
+    // SpeechRecognition may send the same finalized result in multiple events.
+    // Only consume final result indexes once during each recognition run.
+    const startIndex = Math.max(event.resultIndex, finalResultCount.current);
+    for (let i = startIndex; i < event.results.length; i += 1) {
       const part = event.results[i][0]?.transcript || '';
-      if (event.results[i].isFinal) finalChunk += ` ${part}`;
+      if (event.results[i].isFinal) {
+        finalChunk += ` ${part}`;
+        finalResultCount.current = i + 1;
+      }
     }
+    for (let i = 0; i < event.results.length; i += 1) {
+      if (!event.results[i].isFinal) interim += ` ${event.results[i][0]?.transcript || ''}`;
+    }
+    interimRef.current = interim.trim();
     if (finalChunk.trim()) {
-      transcriptRef.current = `${transcriptRef.current} ${finalChunk}`.trim().slice(-8000);
+      const now = Date.now();
+      const normalized = finalChunk.trim().toLocaleLowerCase('pl-PL').replace(/[^\p{L}\p{N}]+/gu, ' ');
+      recentFinals.current = recentFinals.current.filter((entry) => now - entry.time < 3500);
+      const duplicate = recentFinals.current.some((entry) => entry.text === normalized);
+      if (!duplicate) {
+        recentFinals.current.push({ text: normalized, time: now });
+        transcriptRef.current = `${transcriptRef.current} ${finalChunk}`.trim().slice(-8000);
+      }
       setTranscript(transcriptRef.current);
-      askApi(transcriptRef.current);
     }
-  }, [askApi]);
+    const context = `${transcriptRef.current} ${interimRef.current}`.trim().slice(-8000);
+    if (context) analysisQueue.current?.push(context);
+  }, []);
 
   const start = useCallback(async () => {
     setError('');
     const speech = makeRecognizer();
     if (!speech) { setError('Ta przeglądarka nie obsługuje rozpoznawania mowy. Spróbuj Chrome lub Edge.'); return; }
+    analysisQueue.current?.stop();
+    analysisQueue.current = createAnalysisQueue(askApi);
+    interimRef.current = '';
     speech.onresult = onResult;
+    speech.onspeechend = () => {
+      const context = `${transcriptRef.current} ${interimRef.current}`.trim().slice(-8000);
+      if (context && !endByUser.current) analysisQueue.current?.push(context, 0);
+    };
     speech.onerror = (event) => {
       if (event.error !== 'no-speech' && event.error !== 'aborted') setError(`Rozpoznawanie mowy: ${event.error}. Sprawdź uprawnienia mikrofonu i połączenie.`);
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
+        analysisQueue.current?.stop(); clearTimeout(displayTimer.current); requestGeneration.current += 1;
         endByUser.current = true; setListening(false); wakeLock.current?.release?.(); wakeLock.current = null;
       }
     };
-    speech.onend = () => { if (!endByUser.current) { try { speech.start(); } catch { /* browser is still transitioning */ } } else setListening(false); };
+    speech.onend = () => {
+      if (endByUser.current || recognizer.current !== speech) { setListening(false); return; }
+      // Reset result indexes for the new browser recognition run, but retain
+      // a short duplicate guard because Chrome may replay the last final text.
+      finalResultCount.current = 0;
+      const delay = Math.min(700 * (2 ** restartAttempts.current), 5000);
+      restartAttempts.current = Math.min(restartAttempts.current + 1, 3);
+      clearTimeout(restartTimer.current);
+      restartTimer.current = setTimeout(() => {
+        if (endByUser.current || recognizer.current !== speech) return;
+        try { speech.start(); restartAttempts.current = 0; }
+        catch { setError('Chrome przerwał rozpoznawanie. Kliknij „Zatrzymaj”, a potem uruchom nasłuch ponownie.'); setListening(false); }
+      }, delay);
+    };
     recognizer.current = speech; endByUser.current = false;
     displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
+    finalResultCount.current = 0; recentFinals.current = []; restartAttempts.current = 0;
     try {
       speech.start(); setListening(true); setState({ status: 'Nasłuchuję spotkania', quote: null, cards: [{ label: '✅ SŁUCHAJ', message: 'Spotkanie trwa. Nie przerywaj klientowi.', reason: 'Sugestie pokażą się, gdy pojawi się ważny sygnał.', priority: 'LOW' }] });
       if ('wakeLock' in navigator) wakeLock.current = await navigator.wakeLock.request('screen').catch(() => null);
     } catch { setError('Nie udało się włączyć mikrofonu. Sprawdź uprawnienia witryny i HTTPS.'); setListening(false); }
-  }, [onResult]);
+  }, [onResult, askApi]);
 
   const stop = useCallback(() => {
+    analysisQueue.current?.stop(); clearTimeout(displayTimer.current); clearTimeout(restartTimer.current); pendingSuggestion.current = null;
     requestGeneration.current += 1; requestInFlight.current = false;
     endByUser.current = true; recognizer.current?.stop(); recognizer.current = null;
     wakeLock.current?.release?.(); wakeLock.current = null; setListening(false); setState((current) => ({ ...current, status: 'Nasłuchiwanie zatrzymane' }));
@@ -133,7 +201,7 @@ function App() {
     const id = window.setInterval(() => setSessionSeconds((s) => s + 1), 1000);
     return () => window.clearInterval(id);
   }, [listening]);
-  useEffect(() => () => { endByUser.current = true; recognizer.current?.stop(); wakeLock.current?.release?.(); }, []);
+  useEffect(() => () => { endByUser.current = true; analysisQueue.current?.stop(); clearTimeout(displayTimer.current); clearTimeout(restartTimer.current); requestGeneration.current += 1; recognizer.current?.stop(); wakeLock.current?.release?.(); }, []);
 
   const resetSession = () => { stop(); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
   const manualPrompt = () => {
