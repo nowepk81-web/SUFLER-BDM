@@ -16,7 +16,7 @@ export async function onRequestPost({ request, env }) {
   const upstream = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: 'deepseek-flash', temperature: 0.2, response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: system }, { role: 'user', content: `Kontekst bieżącego spotkania (rozpoznawanie mowy może zawierać błędy):\n${body.context}` }] })
+      messages: [{ role: 'system', content: system + '\nZASADA CZYTELNOŚCI: Zwróć tylko jedną kartę z jednym najlepszym ruchem. message to jedno krótkie zdanie, najlepiej 6–12 słów, maksymalnie 120 znaków. reason maksymalnie 70 znaków. Nie łącz kilku pytań i nie dodawaj wstępów. quote to krótki, dosłowny fragment rozmowy. Jeśli pytanie jest dłuższe, przepisz je zwięźlej przed zwróceniem JSON.' }, { role: 'user', content: `Kontekst bieżącego spotkania (rozpoznawanie mowy może zawierać błędy):\n${body.context}` }] })
   });
   if (upstream.status === 401 || upstream.status === 403) return json({ error: 'DeepSeek odrzucił ten klucz API. Sprawdź go i spróbuj ponownie.' }, 401);
   if (upstream.status === 402) return json({ error: 'Konto DeepSeek wymaga doładowania lub aktywacji rozliczeń.' }, 402);
@@ -25,7 +25,7 @@ export async function onRequestPost({ request, env }) {
   let parsed;
   try { parsed = JSON.parse(result.choices?.[0]?.message?.content || ''); } catch { return json({ error: 'Nie udało się odczytać podpowiedzi AI.' }, 502); }
   if (typeof parsed.status !== 'string' || !Array.isArray(parsed.cards)) return json({ error: 'Nieprawidłowy format odpowiedzi AI.' }, 502);
-  const cards = parsed.cards.slice(0, 3).filter((card) => card && typeof card.label === 'string' && typeof card.message === 'string' && typeof card.reason === 'string')
+  const cards = parsed.cards.slice(0, 1).filter((card) => card && typeof card.label === 'string' && typeof card.message === 'string' && typeof card.reason === 'string')
     .map((card) => ({ label: card.label.slice(0, 70), message: card.message.slice(0, 380), reason: card.reason.slice(0, 220), priority: ['HIGH', 'MEDIUM', 'LOW'].includes(card.priority) ? card.priority : 'MEDIUM' }));
   return json({ status: parsed.status.slice(0, 130), quote: typeof parsed.quote === 'string' ? parsed.quote.slice(-240) : null, cards }, 200);
 }

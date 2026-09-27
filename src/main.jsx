@@ -40,43 +40,65 @@ function App() {
   const lastRequest = useRef(0);
   const endByUser = useRef(false);
   const wakeLock = useRef(null);
+  const displayedAt = useRef(0);
+  const displayedMessage = useRef('');
+  const requestGeneration = useRef(0);
+  const requestInFlight = useRef(false);
+
+  // Keep the entire card, including its quote, stable while the user reads.
+  const showSuggestion = useCallback((next) => {
+    const message = next.cards?.[0]?.message;
+    if (!message || message === displayedMessage.current) return;
+    const now = Date.now();
+    if (displayedAt.current && now - displayedAt.current < 30000) return;
+    displayedAt.current = now;
+    displayedMessage.current = message;
+    setState(next);
+  }, []);
 
   const support = useMemo(() => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition), []);
   const elapsed = `${String(Math.floor(sessionSeconds / 60)).padStart(2, '0')}:${String(sessionSeconds % 60).padStart(2, '0')}`;
 
   const askApi = useCallback(async (context) => {
     const now = Date.now();
-    if (now - lastRequest.current < 12000) return;
+    if (requestInFlight.current || now - lastRequest.current < 12000) return;
+    if (displayedAt.current && now - displayedAt.current < 30000) return;
     lastRequest.current = now;
+    requestInFlight.current = true;
+    const generation = requestGeneration.current;
     try {
       const response = await fetch('/api/coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context }) });
       if (!response.ok) {
         const problem = await response.json().catch(() => ({}));
+        if (generation !== requestGeneration.current) return;
         setApiMode('błąd połączenia');
         setError(problem.error || 'DeepSeek chwilowo nie odpowiada.');
+        showSuggestion(localCoach(context.slice(-1200)));
         return;
       }
       const data = await response.json();
-      setState(data); setApiMode('AI połączone');
-    } catch { /* Keep local cards if the network/API is unavailable. */ }
-  }, []);
+      if (generation !== requestGeneration.current) return;
+      showSuggestion(data); setApiMode('AI połączone'); setError('');
+    } catch {
+      if (generation !== requestGeneration.current) return;
+      setApiMode('Reguły lokalne · brak połączenia');
+      showSuggestion(localCoach(context.slice(-1200)));
+    } finally {
+      if (generation === requestGeneration.current) requestInFlight.current = false;
+    }
+  }, [showSuggestion]);
 
   const onResult = useCallback((event) => {
+    if (endByUser.current) return;
     let finalChunk = '';
-    let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const part = event.results[i][0]?.transcript || '';
       if (event.results[i].isFinal) finalChunk += ` ${part}`;
-      else interim += ` ${part}`;
     }
     if (finalChunk.trim()) {
       transcriptRef.current = `${transcriptRef.current} ${finalChunk}`.trim().slice(-8000);
       setTranscript(transcriptRef.current);
-      const next = localCoach(transcriptRef.current);
-      setState(next);
       askApi(transcriptRef.current);
-    } else if (interim.trim()) {
-      setState((current) => ({ ...current, quote: interim.trim().slice(-220) }));
     }
   }, [askApi]);
 
@@ -93,6 +115,7 @@ function App() {
     };
     speech.onend = () => { if (!endByUser.current) { try { speech.start(); } catch { /* browser is still transitioning */ } } else setListening(false); };
     recognizer.current = speech; endByUser.current = false;
+    displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
     try {
       speech.start(); setListening(true); setState({ status: 'Nasłuchuję spotkania', quote: null, cards: [{ label: '✅ SŁUCHAJ', message: 'Spotkanie trwa. Nie przerywaj klientowi.', reason: 'Sugestie pokażą się, gdy pojawi się ważny sygnał.', priority: 'LOW' }] });
       if ('wakeLock' in navigator) wakeLock.current = await navigator.wakeLock.request('screen').catch(() => null);
@@ -100,6 +123,7 @@ function App() {
   }, [onResult]);
 
   const stop = useCallback(() => {
+    requestGeneration.current += 1; requestInFlight.current = false;
     endByUser.current = true; recognizer.current?.stop(); recognizer.current = null;
     wakeLock.current?.release?.(); wakeLock.current = null; setListening(false); setState((current) => ({ ...current, status: 'Nasłuchiwanie zatrzymane' }));
   }, []);
@@ -111,7 +135,7 @@ function App() {
   }, [listening]);
   useEffect(() => () => { endByUser.current = true; recognizer.current?.stop(); wakeLock.current?.release?.(); }, []);
 
-  const resetSession = () => { stop(); transcriptRef.current = ''; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
+  const resetSession = () => { stop(); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
   const manualPrompt = () => {
     const text = manualTopic.trim(); if (!text) return;
     setState(localCoach(text)); setTranscript(text); transcriptRef.current = text; setManualTopic('');
