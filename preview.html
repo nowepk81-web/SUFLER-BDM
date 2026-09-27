@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1118" />
+  <title>BDM Live Coach — podgląd interfejsu</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+  <style>
+    body{min-height:100vh}.app-shell{min-height:100vh}.live-demo{color:#9fe0bd;font-size:9px;font-family:'DM Mono',monospace;letter-spacing:.08em;margin-top:12px}.demo-meter{display:flex;gap:4px;align-items:center}.demo-meter i{display:block;background:#8dd5a7;width:3px;border-radius:3px;height:8px}.demo-meter i:nth-child(2n){height:14px}.demo-meter i:nth-child(3n){height:19px}.demo-meter i:nth-child(4n){height:11px}.quoted-speaker{font:9px 'DM Mono',monospace;color:#769080;margin-bottom:5px}.scene-badge{border:1px solid #33443a;color:#a8d9b7;border-radius:20px;padding:5px 8px;font:8px 'DM Mono',monospace;margin-left:auto}.demo-note{text-align:center;color:#64727a;font:9px 'DM Mono',monospace;padding:7px 0 0}
+  </style>
+</head>
+<body>
+<main class="app-shell">
+  <header class="topbar">
+    <a class="brand" href="#"><span class="brand-mark"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-8 5 16 3-8h4"/></svg></span><span>BDM <b>LIVE COACH</b></span></a>
+    <div class="top-actions"><span class="service-pill is-live"><span class="status-dot"></span>NA ŻYWO · 08:42</span><button class="icon-button">⚙</button></div>
+  </header>
+  <section class="hero">
+    <div class="eyebrow"><span class="eyebrow-line"></span> ASYSTENT SPOTKAŃ B2B <span class="eyebrow-line"></span></div>
+    <h1>Jestem na<br/><em>nasłuchu.</em></h1>
+    <p>Analizuję przebieg spotkania. Wróć tu po krótką, konkretną podpowiedź.</p>
+    <button class="listen-button stop-button"><span class="listen-icon">◼</span>Zatrzymaj nasłuchiwanie</button>
+    <div class="live-demo"><span class="demo-meter"><i></i><i></i><i></i><i></i><i></i><i></i></span> MIKROFON AKTYWNY · SŁUCHAM SPOTKANIA</div>
+    <div class="trust-row"><span>✓ Brak nagrania w aplikacji</span><i></i><span>Bez dźwięków i wibracji</span><i></i><span>AI połączone</span></div>
+  </section>
+  <section class="coach-section">
+    <div class="section-heading"><div><div class="section-kicker">◉ &nbsp;PODPOWIEDŹ NA TERAZ</div><h2>Twój następny ruch</h2></div><button class="subtle-button">↻ &nbsp;Nowa sesja</button></div>
+    <article class="insight-card">
+      <div class="insight-top"><span class="priority-mark">✧</span><span class="status-label">Selekcja · klient właśnie nazwał problem</span><span class="scene-badge">PRIORYTET WYSOKI</span></div>
+      <blockquote><div class="quoted-speaker">KLIENT · TRANSKRYPCJA NA ŻYWO</div>„Na jedno stanowisko wpada czasem 150 CV, ale sensownych kandydatów jest może dziesięciu.”</blockquote>
+      <div class="suggestion primary-suggestion"><div class="suggestion-label">⭐ ZADAJ TERAZ</div><p>„Jak dużo czasu zajmuje dziś przejrzenie tych wszystkich zgłoszeń?”</p><div class="why-line">↗ &nbsp;Nie zakładaj skali problemu — pozwól klientowi opisać ją własnymi słowami.</div></div>
+      <div class="suggestion"><div class="suggestion-label">ALTERNATYWA 1</div><p>„Co dzieje się z pozostałymi CV po zakończeniu rekrutacji?”</p><div class="why-line">↗ &nbsp;Może otworzyć temat ponownego wykorzystania kandydatów.</div></div>
+      <div class="card-foot"><span>✓ &nbsp;Krótko. Naturalnie. Do użycia od razu.</span><button>Pokaż kontekst&nbsp;⌄</button></div>
+    </article>
+    <div class="demo-note">MAKSYMALNIE 3 KARTY · PODPOWIEDZI WIDOCZNE TYLKO DLA CIEBIE</div>
+  </section>
+  <section class="quick-input"><div class="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div class="input-row"><input placeholder="Wpisz hasło lub krótki cytat klienta…"/><button>Podpowiedz&nbsp; →</button></div><div class="chips"><button>Cena</button><button>Test</button><button>Selekcja</button><button>Manager</button><button>RODO</button></div></section>
+  <footer class="footer"><div class="footer-left"><span class="footer-logo">BDM / COACH</span><span>zbudowany dla lepszych rozmów</span></div><button>ⓘ &nbsp;Jak to działa</button></footer>
+  <label class="consent-fixed"><input type="checkbox" checked/><span>Potwierdzam, że mogę używać transkrypcji z tego spotkania.</span></label>
+</main>
+</body>
+</html>
