@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { onRequestPost } from '../functions/api/coach.js';
+import { guardNextMove, onRequestPost } from '../functions/api/coach.js';
 
 test('do DeepSeek trafia tylko bieżący kontekst i trafna anonimowa analogia', async () => {
   const previousFetch = globalThis.fetch;
@@ -27,4 +27,26 @@ test('do DeepSeek trafia tylko bieżący kontekst i trafna anonimowa analogia', 
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test('powtórzona prośba o cenę nie wpada w pętlę pytań', () => {
+  const result = guardNextMove({
+    signal: { type: 'PRICE', intent: 'DIRECT_REQUEST', requestCount: 2 },
+    lastAdvice: 'Z czym porównuje Pani ten koszt?', notify: true,
+    cards: [{ label: 'DOPYTAJ', message: 'Z czym porównuje Pani ten koszt?', reason: 'Wyjaśnij.', priority: 'HIGH' }],
+  });
+  assert.equal(result.notify, true);
+  assert.match(result.cards[0].message, /249 zł/);
+  assert.doesNotMatch(result.cards[0].message, /Z czym porównuje/);
+});
+
+test('prośba o test nie jest blokowana obowiązkowymi kryteriami', () => {
+  const result = guardNextMove({
+    signal: { type: 'TEST_OR_DECISION', intent: 'DIRECT_REQUEST', requestCount: 1 },
+    lastAdvice: '', notify: true,
+    cards: [{ label: 'DOPYTAJ', message: 'Po czym Pani pozna, że test się udał?', reason: 'Ustal kryteria.', priority: 'HIGH' }],
+  });
+  assert.equal(result.notify, true);
+  assert.match(result.cards[0].message, /sprawdzenia systemu/);
+  assert.doesNotMatch(result.cards[0].message, /Po czym/);
 });

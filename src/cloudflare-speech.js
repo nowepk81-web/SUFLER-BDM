@@ -1,5 +1,5 @@
 const TARGET_SAMPLE_RATE = 16_000;
-const CHUNK_SECONDS = 5;
+const CHUNK_SECONDS = 3.6;
 
 function wavFromSamples(parts, sampleRate) {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
@@ -35,73 +35,123 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
   let context;
   let source;
   let processor;
+  let worklet;
   let stopped = false;
   let sampleParts = [];
   let sampleCount = 0;
   let pending = [];
-  let sending = false;
+  let active = 0;
+  let nextId = 0;
+  let deliverId = 0;
+  let previousTail = new Float32Array(0);
+  const completed = new Map();
   const controllers = new Set();
-  const sendNext = async () => {
-    if (sending || stopped || !pending.length) return;
-    sending = true;
-    const wav = pending.shift();
-    const controller = new AbortController();
-    controllers.add(controller);
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    try {
-      const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav, signal: controller.signal });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Błąd transkrypcji Cloudflare.');
+  const deliver = () => {
+    while (completed.has(deliverId)) {
+      const result = completed.get(deliverId);
+      completed.delete(deliverId++);
+      if (stopped) continue;
+      if (result.error) onError(result.error);
+      else {
+        if (result.text) onText(result.text);
+        onStatus('Nasłuch działa · Cloudflare rozpoznaje mowę');
       }
-      const data = await response.json();
-      if (!stopped && data.text) onText(data.text);
-      if (!stopped) onStatus('Nasłuch działa · Cloudflare rozpoznaje mowę');
-    } catch (error) {
-      if (!stopped) onError(error.message || 'Nie udało się rozpoznać mowy.');
-    } finally {
-      clearTimeout(timeout);
-      controllers.delete(controller);
-      sending = false;
-      if (!stopped) sendNext();
     }
+  };
+  const sendNext = () => {
+    while (!stopped && active < 2 && pending.length) {
+      const item = pending.shift();
+      active += 1;
+      const controller = new AbortController();
+      controllers.add(controller);
+      const timeout = setTimeout(() => controller.abort(), 18000);
+      (async () => {
+        let result;
+        try {
+          const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: item.wav, signal: controller.signal });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || 'Błąd transkrypcji Cloudflare.');
+          }
+          const data = await response.json();
+          result = { text: typeof data.text === 'string' ? data.text : '' };
+        } catch (error) { result = { error: error.message || 'Nie udało się rozpoznać mowy.' }; }
+        finally {
+          clearTimeout(timeout);
+          controllers.delete(controller);
+          active -= 1;
+          completed.set(item.id, result);
+          deliver();
+          sendNext();
+        }
+      })();
+    }
+  };
+  const acceptSamples = (samples) => {
+    if (stopped) return;
+    let energy = 0;
+    for (let i = 0; i < samples.length; i += 8) energy += samples[i] * samples[i];
+    const rms = Math.sqrt(energy / Math.ceil(samples.length / 8));
+    if (rms < 0.00025) { previousTail = new Float32Array(0); onStatus('Mikrofon działa · cisza'); return; }
+    const wav = wavFromSamples(previousTail.length ? [previousTail, samples] : [samples], context.sampleRate);
+    previousTail = samples.slice(-Math.round(context.sampleRate * 0.4));
+    if (pending.length >= 4) {
+      const dropped = pending.shift();
+      completed.set(dropped.id, { text: '' });
+      deliver();
+      onStatus('Transkrypcja nie nadąża · pominięto fragment');
+    }
+    pending.push({ id: nextId++, wav });
+    onStatus('Rozpoznaję wypowiedź…');
+    sendNext();
   };
   try {
     context = new AudioContextType();
     await context.resume();
     if (context.state !== 'running') throw new Error('Przeglądarka wstrzymała mikrofon. Dotknij przycisku ponownie.');
     source = context.createMediaStreamSource(stream);
-    processor = context.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = (event) => {
-      if (stopped) return;
-      const samples = new Float32Array(event.inputBuffer.getChannelData(0));
-      sampleParts.push(samples);
-      sampleCount += samples.length;
-      if (sampleCount < context.sampleRate * CHUNK_SECONDS) return;
-      const wav = wavFromSamples(sampleParts, context.sampleRate);
-      sampleParts = []; sampleCount = 0;
-      if (pending.length >= 2) pending.shift();
-      pending.push(wav);
-      onStatus('Przesyłam krótki fragment do rozpoznania…');
-      sendNext();
-    };
-    source.connect(processor);
-    processor.connect(context.destination);
-    onStatus('Mikrofon działa · czekam na pierwszy fragment');
+    if (context.audioWorklet && window.AudioWorkletNode) {
+      try {
+        await context.audioWorklet.addModule('/audio-capture-worklet.js');
+        worklet = new AudioWorkletNode(context, 'capture-chunks');
+        worklet.port.onmessage = (event) => acceptSamples(event.data);
+        source.connect(worklet);
+        worklet.connect(context.destination);
+      } catch { worklet?.disconnect(); worklet = null; }
+    }
+    if (!worklet) {
+      processor = context.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (event) => {
+        if (stopped) return;
+        const samples = new Float32Array(event.inputBuffer.getChannelData(0));
+        sampleParts.push(samples);
+        sampleCount += samples.length;
+        if (sampleCount < context.sampleRate * CHUNK_SECONDS) return;
+        const total = new Float32Array(sampleCount);
+        let offset = 0;
+        for (const part of sampleParts) { total.set(part, offset); offset += part.length; }
+        sampleParts = []; sampleCount = 0;
+        acceptSamples(total);
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+    }
+    onStatus(`Mikrofon działa · ${worklet ? 'AudioWorklet' : 'tryb zgodności'} · czekam na mowę`);
   } catch (error) {
     stopped = true;
     stream.getTracks().forEach((track) => track.stop());
-    source?.disconnect(); processor?.disconnect();
+    source?.disconnect(); processor?.disconnect(); worklet?.disconnect();
     await context?.close().catch(() => {});
     throw error;
   }
   return {
     stop() {
       stopped = true;
-      pending = []; sampleParts = [];
+      pending = []; sampleParts = []; completed.clear();
       for (const controller of controllers) controller.abort();
-      processor.onaudioprocess = null;
-      source.disconnect(); processor.disconnect();
+      if (processor) processor.onaudioprocess = null;
+      if (worklet) worklet.port.onmessage = null;
+      source.disconnect(); processor?.disconnect(); worklet?.disconnect();
       stream.getTracks().forEach((track) => track.stop());
       context.close().catch(() => {});
     },

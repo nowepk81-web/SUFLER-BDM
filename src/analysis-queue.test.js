@@ -54,3 +54,15 @@ test('speech arriving during AI request is retained; stop cancels queued work', 
   await Promise.resolve(); await timer.advance(30000);
   assert.deepEqual(seen, ['A', 'B']);
 });
+
+test('pilny sygnał nie jest nadpisany przez zwykłą wypowiedź i omija odstęp', async () => {
+  const timer = clock(), seen = [];
+  const queue = createAnalysisQueue(async text => seen.push(text), timer);
+  queue.push('Wartość', 0, 'HIGH');
+  queue.push('Zwykły komentarz', 0, 'MEDIUM');
+  await timer.advance(0);
+  assert.deepEqual(seen, ['Wartość']);
+  queue.push('Pytanie o cenę', 0, 'HIGH');
+  await timer.advance(0);
+  assert.deepEqual(seen, ['Wartość', 'Pytanie o cenę']);
+});

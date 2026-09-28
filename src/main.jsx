@@ -5,19 +5,19 @@ import './styles.css';
 import { createAnalysisQueue } from './analysis-queue.js';
 import { detectSignal } from './signal-detector.js';
 import { startCloudflareSpeech } from './cloudflare-speech.js';
+import { mergeTranscript } from './transcript.js';
 
-const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Naciśnij „Rozpocznij nasłuchiwanie”, gdy spotkanie się zacznie.', reason: 'Słucham tylko po uruchomieniu i za Twoją zgodą.', priority: 'LOW' }] };
+const quietState = { status: 'Spokojnie słucham', quote: null, cards: [{ label: 'SŁUCHAJ', message: 'Prowadź rozmowę naturalnie. Odezwę się przy ważnym sygnale.', reason: 'Bez podpowiedzi po każdym zdaniu.', priority: 'LOW' }] };
+const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Włącz nasłuch, gdy spotkanie się rozpocznie.', reason: 'Aplikacja poprosi o dostęp do mikrofonu.', priority: 'LOW' }] };
 
-function localCoach(text) {
-  const t = text.toLocaleLowerCase('pl-PL');
-  const state = (status, label, message, reason, quote = text) => ({ status, quote: quote?.slice(-220) || null, cards: [{ label, message, reason, priority: 'HIGH' }] });
-  if (/za drogo|drogo|cena|koszt/.test(t)) return state('Cena · najpierw zrozum obiekcję', '🛑 NIE BROŃ CENY', 'Z czym porównuje Pani ten koszt?', 'Najpierw ustal punkt odniesienia.');
-  if (/wdrażamy|kupujemy|umowę|idziemy we współpracę|proszę przygotować umowę/.test(t)) return state('Decyzja · przejdź do kolejnych kroków', '➡️ ZMIEŃ ETAP', 'Co musi się wydarzyć po Państwa stronie, żebyśmy mogli przejść dalej?', 'Klient sygnalizuje decyzję — dopnij proces.');
-  if (/test|przetestować|demo/.test(t)) return state('Test · ustal kryteria sukcesu', '⭐ ZADAJ TERAZ', 'Po czym po dwóch tygodniach pozna Pani, że system rzeczywiście pomaga?', 'Test powinien potwierdzić konkretną wartość.');
-  if (/świetne|ważne|potrzebujemy|pomogłoby|tego nam brakuje/.test(t)) return state('Wartość · zatrzymaj się przy niej', '🛑 STOP — ZNALAZŁEŚ WARTOŚĆ', 'Co dokładnie byłoby w tym dla Pani najważniejsze?', 'Klient sam wskazał wartość — pogłęb ją.');
-  if (/nie potrzebujemy|nie jest problem|mamy to poukładane/.test(t)) return state('Ten wątek nie rezonuje', '↪️ ODPUŚĆ TEN WĄTEK', 'W takim razie gdzie widzi Pani większy potencjał usprawnienia?', 'Nie twórz sztucznego problemu.');
-  if (/cv|ręcznie|czasochłonne|chaos|zabiera czasu/.test(t)) return state('Proces · poznaj skalę', '⭐ ZADAJ TERAZ', 'Jak dużo czasu to dzisiaj wymaga?', 'Nie licz korzyści za klienta — pozwól mu opisać skalę.');
-  return { status: 'Rozpoznanie potrzeb · słuchaj', quote: null, cards: [{ label: '✅ SŁUCHAJ', message: 'Daj klientowi dokończyć myśl i zbierz kontekst.', reason: 'Zmieniaj sugestię dopiero, gdy pojawi się nowy sygnał.', priority: 'MEDIUM' }] };
+async function probeCloudflare() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch('/api/transcribe', { cache: 'no-store', signal: controller.signal });
+    return response.ok && Boolean((await response.json()).available);
+  } catch { return false; }
+  finally { clearTimeout(timer); }
 }
 
 function makeRecognizer() {
@@ -37,7 +37,7 @@ function App() {
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [manualTopic, setManualTopic] = useState('');
-  const [apiMode, setApiMode] = useState('Reguły lokalne');
+  const [apiMode, setApiMode] = useState('AI uruchomi się po sygnale');
   const [speechStatus, setSpeechStatus] = useState('Mikrofon wyłączony');
   const [cloudflareAvailable, setCloudflareAvailable] = useState(null);
   const [starting, setStarting] = useState(false);
@@ -66,6 +66,7 @@ function App() {
   const recentUtterances = useRef([]);
   const meetingSummary = useRef('');
   const lastSignalAt = useRef({});
+  const topicRequests = useRef({});
 
   // Keep the entire card, including its quote, stable while the user reads.
   const showSuggestion = useCallback((next) => {
@@ -97,7 +98,7 @@ function App() {
 
   const elapsed = `${String(Math.floor(sessionSeconds / 60)).padStart(2, '0')}:${String(sessionSeconds % 60).padStart(2, '0')}`;
 
-  const askApi = useCallback(async (payloadText) => {
+  const askApi = useCallback(async (payloadText, interruptSignal) => {
     let payload;
     try { payload = JSON.parse(payloadText); } catch { return; }
     const now = Date.now();
@@ -105,6 +106,9 @@ function App() {
     requestInFlight.current = true;
     const generation = requestGeneration.current;
     const controller = new AbortController();
+    const interrupt = () => controller.abort();
+    interruptSignal?.addEventListener('abort', interrupt, { once: true });
+    if (interruptSignal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), 20000);
     setApiMode('Analizuję wypowiedź…');
     try {
@@ -114,7 +118,6 @@ function App() {
         if (generation !== requestGeneration.current) return;
         setApiMode('błąd połączenia');
         setError(problem.error || 'DeepSeek chwilowo nie odpowiada.');
-        showSuggestion(localCoach(payload.context.slice(-1200)));
         return;
       }
       const data = await response.json();
@@ -122,39 +125,50 @@ function App() {
       if (typeof data.memory === 'string') meetingSummary.current = data.memory.slice(0, 500);
       if (payload.signal?.priority === 'HIGH' && data.cards?.[0]) data.cards[0].priority = 'HIGH';
       if (data.notify !== false) showSuggestion(data);
-      setApiMode('Porady AI gotowe'); setError('');
+      setApiMode('AI połączone'); setError('');
     } catch {
       if (generation !== requestGeneration.current) return;
-      setApiMode('Reguły lokalne · brak połączenia');
-      showSuggestion(localCoach(payload.context.slice(-1200)));
+      if (interruptSignal?.aborted) return;
+      setApiMode('AI chwilowo niedostępne');
+      setError('Nie udało się pobrać podpowiedzi AI. Nasłuch trwa; spróbuję przy kolejnym ważnym sygnale.');
     } finally {
       clearTimeout(timeout);
+      interruptSignal?.removeEventListener('abort', interrupt);
       if (generation === requestGeneration.current) requestInFlight.current = false;
     }
   }, [showSuggestion]);
 
   const acceptFinalText = useCallback((finalChunk) => {
     if (endByUser.current || !finalChunk.trim()) return;
-      const now = Date.now();
-      const normalized = finalChunk.trim().toLocaleLowerCase('pl-PL').replace(/[^\p{L}\p{N}]+/gu, ' ');
-      recentFinals.current = recentFinals.current.filter((entry) => now - entry.time < 3500);
-      const duplicate = recentFinals.current.some((entry) => entry.text === normalized);
-      if (!duplicate) {
+    const now = Date.now();
+    const normalized = finalChunk.trim().toLocaleLowerCase('pl-PL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    recentFinals.current = recentFinals.current.filter((entry) => now - entry.time < 18000);
+    const duplicate = normalized.length > 10 && recentFinals.current.some((entry) => entry.text === normalized);
+    if (!duplicate) {
+      const previous = recentUtterances.current.at(-1) || '';
+      const merged = mergeTranscript(transcriptRef.current, finalChunk);
+      if (merged.added) {
         recentFinals.current.push({ text: normalized, time: now });
-        transcriptRef.current = `${transcriptRef.current} ${finalChunk}`.trim().slice(-8000);
-        recentUtterances.current.push(finalChunk.trim());
-        recentUtterances.current = recentUtterances.current.slice(-6);
-        const signal = detectSignal(finalChunk);
-        if (signal && now - (lastSignalAt.current[signal.type] || 0) >= 8000) {
-          lastSignalAt.current[signal.type] = now;
-          const context = recentUtterances.current.join('\n').slice(-2200);
-          analysisQueue.current?.push(JSON.stringify({
-            summary: meetingSummary.current,
-            context,
-            signal,
-          }), signal.priority === 'HIGH' ? 0 : 500);
+        transcriptRef.current = merged.transcript;
+        recentUtterances.current.push(merged.added);
+        recentUtterances.current = recentUtterances.current.slice(-12);
+        const signal = detectSignal(merged.added) || (merged.added.length < 100 ? detectSignal(`${previous.slice(-90)} ${merged.added}`) : null);
+        if (signal) {
+          const topic = signal.topic || signal.type;
+          const previousRequest = topicRequests.current[topic];
+          const requestCount = previousRequest && now - previousRequest.time < 120000 ? Math.min(previousRequest.count + 1, 9) : 1;
+          topicRequests.current[topic] = { count: requestCount, time: now };
+          signal.requestCount = requestCount;
+          const direct = signal.intent === 'DIRECT_REQUEST' || signal.type === 'BUYING_SIGNAL';
+          const cooldown = direct && requestCount > 1 ? 0 : signal.priority === 'HIGH' ? 6000 : 20000;
+          if (now - (lastSignalAt.current[topic] || 0) >= cooldown) {
+            lastSignalAt.current[topic] = now;
+            const context = recentUtterances.current.join('\n').slice(-3600);
+            analysisQueue.current?.push(JSON.stringify({ summary: meetingSummary.current, context, signal, lastAdvice: displayedMessage.current }), signal.priority === 'HIGH' ? 0 : 650, signal.priority);
+          }
         }
       }
+    }
     setTranscript(transcriptRef.current);
     setInterimText('');
   }, []);
@@ -185,14 +199,8 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    fetch('/api/transcribe', { cache: 'no-store', signal: controller.signal })
-      .then((response) => response.ok ? response.json() : null)
-      .then((data) => { if (active) setCloudflareAvailable(Boolean(data?.available)); })
-      .catch(() => { if (active) setCloudflareAvailable(false); })
-      .finally(() => clearTimeout(timer));
-    return () => { active = false; clearTimeout(timer); controller.abort(); };
+    probeCloudflare().then((available) => { if (active) setCloudflareAvailable(available); });
+    return () => { active = false; };
   }, []);
 
   const start = useCallback(async () => {
@@ -205,10 +213,13 @@ function App() {
     interimRef.current = '';
     endByUser.current = false;
     displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
-    recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {};
+    recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {};
     finalResultCount.current = 0; recentFinals.current = []; restartAttempts.current = 0;
     transcribeFailures.current = 0;
-    if (cloudflareAvailable) {
+    const useCloudflare = cloudflareAvailable === true || await probeCloudflare();
+    if (generation !== startGeneration.current) return;
+    setCloudflareAvailable(useCloudflare);
+    if (useCloudflare) {
       try {
         const capture = await startCloudflareSpeech({
           onText: (text) => { transcribeFailures.current = 0; acceptFinalText(text); },
@@ -231,7 +242,7 @@ function App() {
         if (generation !== startGeneration.current || endByUser.current) { capture.stop(); return; }
         cloudflareCapture.current = capture;
         setStarting(false); setListening(true);
-        setState({ status: 'Nasłuchuję spotkania', quote: null, cards: [{ label: '✅ SŁUCHAJ', message: 'Spotkanie trwa. Nie przerywaj klientowi.', reason: 'Sugestie pokażą się, gdy pojawi się ważny sygnał.', priority: 'LOW' }] });
+        setState(quietState);
         if ('wakeLock' in navigator) {
           const lock = await navigator.wakeLock.request('screen').catch(() => null);
           if (endByUser.current) lock?.release?.(); else wakeLock.current = lock;
@@ -285,7 +296,7 @@ function App() {
     };
     recognizer.current = speech;
     try {
-      speech.start(); setSpeechStatus('Uruchamiam mikrofon przeglądarki…'); setState({ status: 'Nasłuchuję spotkania', quote: null, cards: [{ label: '✅ SŁUCHAJ', message: 'Spotkanie trwa. Nie przerywaj klientowi.', reason: 'Sugestie pokażą się, gdy pojawi się ważny sygnał.', priority: 'LOW' }] });
+      speech.start(); setSpeechStatus('Uruchamiam mikrofon przeglądarki…'); setState(quietState);
       startupTimer.current = setTimeout(() => {
         if (recognizer.current !== speech || endByUser.current) return;
         endByUser.current = true;
@@ -317,13 +328,16 @@ function App() {
   }, [listening]);
   useEffect(() => () => { endByUser.current = true; startGeneration.current += 1; analysisQueue.current?.stop(); clearTimeout(displayTimer.current); clearTimeout(restartTimer.current); clearTimeout(startupTimer.current); requestGeneration.current += 1; cloudflareCapture.current?.stop(); recognizer.current?.stop(); wakeLock.current?.release?.(); }, []);
 
-  const resetSession = () => { stop(); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
-  const manualPrompt = () => {
-    const text = manualTopic.trim(); if (!text) return;
-    setState(localCoach(text)); setTranscript(text); transcriptRef.current = text; setManualTopic('');
+  const resetSession = () => { stop(); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {}; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
+  const manualPrompt = (value = manualTopic) => {
+    const text = value.trim(); if (!text) return;
+    const context = [...recentUtterances.current.slice(-10), `Hasło lub pytanie BDM: ${text}`].join('\n').slice(-3600);
+    const payload = JSON.stringify({ context, summary: meetingSummary.current, lastAdvice: displayedMessage.current, signal: { type: 'MANUAL', intent: 'DIRECT_REQUEST', topic: 'manual', priority: 'HIGH', requestCount: 1 } });
+    if (listening) analysisQueue.current?.push(payload, 0, 'HIGH'); else askApi(payload);
+    setManualTopic('');
   };
 
-  return <main className="app-shell">
+  return <main className={`app-shell ${listening ? 'live-layout' : ''}`}>
     <header className="topbar">
       <a className="brand" href="#" aria-label="BDM Live Coach — strona główna"><span className="brand-mark"><Activity size={19}/></span><span>BDM <b>LIVE COACH</b></span></a>
       <div className="top-actions"><span className={`service-pill ${listening ? 'is-live' : ''}`}><span className="status-dot"/>{listening ? `NA ŻYWO · ${elapsed}` : 'GOTOWY'}</span><button className="icon-button" title="Ustawienia" onClick={() => setSettingsOpen(true)}><Settings2 size={19}/></button></div>
@@ -331,10 +345,10 @@ function App() {
 
     <section className="hero">
       <div className="eyebrow"><span className="eyebrow-line"/> ASYSTENT SPOTKAŃ B2B <span className="eyebrow-line"/></div>
-      <h1>{listening ? <>Jestem na<br/><em>nasłuchu.</em></> : <>Skup się na<br/><em>rozmowie.</em></>}</h1>
-      <p>{listening ? 'Analizuję przebieg spotkania. Wróć tu po krótką, konkretną podpowiedź.' : 'Cichy coach eRecruiter, który podpowiada najlepszy następny ruch.'}</p>
-      <button className={`listen-button ${listening ? 'stop-button' : ''}`} onClick={listening ? stop : start} disabled={starting || cloudflareAvailable === null}>
-        <span className="listen-icon">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</span>{cloudflareAvailable === null ? 'Sprawdzam transkrypcję…' : starting ? 'Uruchamiam mikrofon…' : listening ? 'Zatrzymaj nasłuchiwanie' : 'Rozpocznij nasłuchiwanie'}
+      {!listening && <><h1>Skup się na<br/><em>rozmowie.</em></h1><p>Cichy coach eRecruiter, który podpowiada tylko wtedy, gdy może pomóc.</p></>}
+      {listening && <p className="live-summary">Nasłuch trwa. Ważna podpowiedź pozostanie widoczna, dopóki jej nie odłożysz.</p>}
+      <button className={`listen-button ${listening ? 'stop-button' : ''}`} onClick={listening ? stop : start} disabled={starting}>
+        <span className="listen-icon">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</span>{starting ? 'Uruchamiam mikrofon…' : listening ? 'Zatrzymaj nasłuchiwanie' : 'Rozpocznij nasłuchiwanie'}
       </button>
       <div className="trust-row"><span><ShieldCheck size={14}/> Bez zapisu w aplikacji</span><i/><span>Bez dźwięków i wibracji</span><i/><span>{apiMode}</span></div>
       <p className="speech-status" role="status">{speechStatus}</p>
@@ -343,18 +357,18 @@ function App() {
 
     <section className="coach-section">
       <div className="section-heading"><div><div className="section-kicker"><Radio size={14}/> PODPOWIEDŹ NA TERAZ</div><h2>Twój następny ruch</h2></div><button className="subtle-button" onClick={resetSession} title="Nowa sesja"><RotateCcw size={15}/> Nowa sesja</button></div>
-      <article className="insight-card">
+      <article className={`insight-card ${state === quietState ? 'is-quiet' : ''}`}>
         <div className="insight-top"><span className="priority-mark"><Sparkles size={15}/></span><span className="status-label">{state.status}</span><span className="live-pulse"/></div>
         {state.quote && <blockquote>„{state.quote}”</blockquote>}
         {state.cards?.slice(0, 3).map((card, index) => <div className={`suggestion ${index === 0 ? 'primary-suggestion' : ''}`} key={`${card.label}-${index}`}>
           <div className="suggestion-label">{card.label}</div><p>{card.message}</p><div className="why-line"><ArrowRight size={13}/>{card.reason}</div>
         </div>)}
-        <div className="card-foot"><span><Check size={13}/> Krótko. Naturalnie. Do użycia od razu.</span><button onClick={() => setExpanded(!expanded)}>{expanded ? 'Mniej' : 'Pokaż kontekst'}<ChevronDown size={14} className={expanded ? 'rotate' : ''}/></button></div>
+        <div className="card-foot"><span><Check size={13}/> {listening ? 'Podpowiedź zostaje na ekranie.' : 'Krótko. Naturalnie. Do użycia od razu.'}</span><div className="card-actions">{listening && state !== quietState && <button onClick={() => { clearTimeout(displayTimer.current); pendingSuggestion.current = null; displayedMessage.current = ''; setState(quietState); }}>Odłóż</button>}<button onClick={() => setExpanded(!expanded)}>{expanded ? 'Mniej' : 'Pokaż kontekst'}<ChevronDown size={14} className={expanded ? 'rotate' : ''}/></button></div></div>
         {expanded && <div className="context-panel">{transcript || interimText ? `${transcript.slice(-1200)} ${interimText}`.trim() : 'Gdy nasłuch jest aktywny, ostatni fragment rozmowy pojawi się tutaj. Nie zapisujemy go po zakończeniu sesji.'}</div>}
       </article>
     </section>
 
-    <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={manualPrompt} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => { setManualTopic(topic); setState(localCoach(topic)); }}>{topic}</button>)}</div></section>
+    <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
     <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
     {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa klucza skonfigurowanego bezpiecznie po stronie serwera Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu istotnego sygnału; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Mic size={17}/><span>Gdy dostępna jest transkrypcja Cloudflare, krótkie fragmenty dźwięku trafiają do Workers AI bez zapisywania nagrania przez aplikację. W innym przypadku rozpoznawanie mowy przeglądarki może przekazywać audio do swojego dostawcy. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
