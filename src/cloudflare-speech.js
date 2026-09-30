@@ -51,7 +51,7 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
       const result = completed.get(deliverId);
       completed.delete(deliverId++);
       if (stopped) continue;
-      if (result.error) onError(result.error);
+      if (result.error) onError(result.error, result.code);
       else {
         if (result.text) onText(result.text);
         onStatus('Nasłuch działa · Cloudflare rozpoznaje mowę');
@@ -71,11 +71,13 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
           const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: item.wav, signal: controller.signal });
           if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            throw new Error(data.error || 'Błąd transkrypcji Cloudflare.');
+            const problem = new Error(data.error || 'Błąd transkrypcji Cloudflare.');
+            problem.code = data.code;
+            throw problem;
           }
           const data = await response.json();
           result = { text: typeof data.text === 'string' ? data.text : '' };
-        } catch (error) { result = { error: error.message || 'Nie udało się rozpoznać mowy.' }; }
+        } catch (error) { result = { error: error.message || 'Nie udało się rozpoznać mowy.', code: error.code }; }
         finally {
           clearTimeout(timeout);
           controllers.delete(controller);

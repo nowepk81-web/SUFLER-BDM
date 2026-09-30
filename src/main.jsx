@@ -203,22 +203,27 @@ function App() {
     return () => { active = false; };
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async ({ forceBrowser = false, preserveSession = false } = {}) => {
     setError('');
     setStarting(true);
     setSpeechStatus('Sprawdzam transkrypcję i mikrofon…');
     const generation = ++startGeneration.current;
-    analysisQueue.current?.stop();
-    analysisQueue.current = createAnalysisQueue(askApi);
+    if (!preserveSession) {
+      analysisQueue.current?.stop();
+      analysisQueue.current = createAnalysisQueue(askApi);
+    }
     interimRef.current = '';
     endByUser.current = false;
-    displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
-    recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {};
-    finalResultCount.current = 0; recentFinals.current = []; restartAttempts.current = 0;
+    if (!preserveSession) {
+      displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
+      recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {};
+      recentFinals.current = [];
+    }
+    finalResultCount.current = 0; restartAttempts.current = 0;
     transcribeFailures.current = 0;
-    const useCloudflare = cloudflareAvailable === true || await probeCloudflare();
+    const useCloudflare = !forceBrowser && (cloudflareAvailable === true || await probeCloudflare());
     if (generation !== startGeneration.current) return;
-    setCloudflareAvailable(useCloudflare);
+    if (!forceBrowser) setCloudflareAvailable(useCloudflare);
     if (useCloudflare) {
       try {
         const capture = await startCloudflareSpeech({
@@ -227,22 +232,24 @@ function App() {
             setSpeechStatus(status);
             if (status.startsWith('Nasłuch działa')) { transcribeFailures.current = 0; setError(''); }
           },
-          onError: (message) => {
+          onError: (message, code) => {
             transcribeFailures.current += 1;
             setSpeechStatus('Błąd rozpoznawania w Cloudflare');
-            setError(message);
-            if (transcribeFailures.current >= 3) {
-              endByUser.current = true;
+            if (code === 'QUOTA' || code === 'CAPACITY' || transcribeFailures.current >= 3) {
               cloudflareCapture.current?.stop(); cloudflareCapture.current = null;
-              analysisQueue.current?.stop(); setListening(false);
-              setState((current) => ({ ...current, status: 'Nasłuch przerwany' }));
+              setCloudflareAvailable(false);
+              setSpeechStatus('Sprawdzam zapasową transkrypcję…');
+              setError('Cloudflare chwilowo niedostępny. Przełączam na zapasową transkrypcję.');
+              start({ forceBrowser: true, preserveSession: true });
+            } else {
+              setSpeechStatus('Nasłuch trwa · ponawiam transkrypcję');
             }
           },
         });
         if (generation !== startGeneration.current || endByUser.current) { capture.stop(); return; }
         cloudflareCapture.current = capture;
         setStarting(false); setListening(true);
-        setState(quietState);
+        if (!preserveSession) setState(quietState);
         if ('wakeLock' in navigator) {
           const lock = await navigator.wakeLock.request('screen').catch(() => null);
           if (endByUser.current) lock?.release?.(); else wakeLock.current = lock;
@@ -257,7 +264,7 @@ function App() {
     const speech = makeRecognizer();
     if (!speech) {
       setStarting(false); setSpeechStatus('Transkrypcja niedostępna');
-      setError('Ta przeglądarka nie obsługuje rozpoznawania mowy, a Cloudflare AI nie jest włączone.');
+      setError('Transkrypcja Cloudflare jest niedostępna, a ta przeglądarka nie obsługuje zapasowego rozpoznawania mowy.');
       return;
     }
     speech.onresult = onResult;
@@ -296,7 +303,7 @@ function App() {
     };
     recognizer.current = speech;
     try {
-      speech.start(); setSpeechStatus('Uruchamiam mikrofon przeglądarki…'); setState(quietState);
+      speech.start(); setSpeechStatus('Uruchamiam mikrofon przeglądarki…'); if (!preserveSession) setState(quietState);
       startupTimer.current = setTimeout(() => {
         if (recognizer.current !== speech || endByUser.current) return;
         endByUser.current = true;
@@ -347,7 +354,7 @@ function App() {
       <div className="eyebrow"><span className="eyebrow-line"/> ASYSTENT SPOTKAŃ B2B <span className="eyebrow-line"/></div>
       {!listening && <><h1>Skup się na<br/><em>rozmowie.</em></h1><p>Cichy coach eRecruiter, który podpowiada tylko wtedy, gdy może pomóc.</p></>}
       {listening && <p className="live-summary">Nasłuch trwa. Ważna podpowiedź pozostanie widoczna, dopóki jej nie odłożysz.</p>}
-      <button className={`listen-button ${listening ? 'stop-button' : ''}`} onClick={listening ? stop : start} disabled={starting}>
+      <button className={`listen-button ${listening ? 'stop-button' : ''}`} onClick={listening ? stop : () => start()} disabled={starting}>
         <span className="listen-icon">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</span>{starting ? 'Uruchamiam mikrofon…' : listening ? 'Zatrzymaj nasłuchiwanie' : 'Rozpocznij nasłuchiwanie'}
       </button>
       <div className="trust-row"><span><ShieldCheck size={14}/> Bez zapisu w aplikacji</span><i/><span>Bez dźwięków i wibracji</span><i/><span>{apiMode}</span></div>
@@ -370,8 +377,8 @@ function App() {
 
     <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
-    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
-    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa klucza skonfigurowanego bezpiecznie po stronie serwera Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu istotnego sygnału; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Mic size={17}/><span>Gdy dostępna jest transkrypcja Cloudflare, krótkie fragmenty dźwięku trafiają do Workers AI bez zapisywania nagrania przez aplikację. W innym przypadku rozpoznawanie mowy przeglądarki może przekazywać audio do swojego dostawcy. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
+    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.4</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
+    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa kluczy skonfigurowanych po stronie Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu istotnego sygnału; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Mic size={17}/><span>Najpierw krótkie fragmenty dźwięku trafiają do Cloudflare Workers AI. Jeśli Cloudflare zawiedzie, aplikacja przełączy się na rozpoznawanie mowy przeglądarki, które może przekazywać audio do swojego dostawcy. Aplikacja nie zapisuje nagrania. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
   </main>;
 }
 

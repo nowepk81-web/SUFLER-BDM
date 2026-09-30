@@ -36,12 +36,6 @@ Workers AI nalicza użycie modelu rozpoznawania mowy; Cloudflare opisuje dzienny
 
 ## 5. Sprawdź działanie
 
-### Opcjonalnie: Azure Speech jako zapasowa transkrypcja
-
-Utwórz zasób **Azure AI Speech** w planie **Free (F0)**. Z panelu zasobu skopiuj klucz i region. W projekcie Cloudflare Pages dodaj w **Settings → Variables and Secrets** dwa sekrety produkcyjne: `AZURE_SPEECH_KEY` (klucz zasobu) i `AZURE_SPEECH_REGION` (kod regionu, np. `westeurope`). Następnie uruchom nowe wdrożenie. Nie umieszczaj tych wartości w GitHub ani w plikach `VITE_*`.
-
-Endpoint `/api/azure-speech` powinien wtedy odpowiadać `{"available":true}`. Kolejność nasłuchu: Cloudflare, w razie awarii Azure, na końcu rozpoznawanie przeglądarki. Bez skonfigurowanego Azure aplikacja pomija ten krok. Azure wydaje przeglądarce krótkotrwały token; ponieważ aplikacja jest publiczna i nie ma logowania, osoby z linkiem mogą zużywać bezpłatny limit. Monitoruj wykorzystanie zasobu i zastosuj reguły ograniczające ruch Cloudflare. W planie F0 po wyczerpaniu przydziału Azure przestanie rozpoznawać mowę, a aplikacja spróbuje metody przeglądarki.
-
 1. Otwórz domenę `*.pages.dev` pokazaną w Cloudflare.
 2. Zezwól przeglądarce na mikrofon i uruchom nasłuch.
 3. Po kilku sekundach mówienia otwórz **Pokaż kontekst** i sprawdź, czy pojawia się tekst. Status pod przyciskiem pokaże, która usługa rozpoznaje mowę.
@@ -57,4 +51,8 @@ Anonimowe wzorce z wcześniejszych rozmów są w `lib/reference-patterns.js`. Zm
 
 ## Dane i prywatność
 
-Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy Cloudflare zawiedzie i Azure jest skonfigurowany, mikrofon przekazuje dźwięk do Azure. W ostatniej kolejności usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.
+Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy Cloudflare zawiedzie, usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.
+
+## Wersja 2.4 — Cloudflare i przeglądarka
+
+Po wdrożeniu stopka pokazuje `v2.4`. Ta wersja nie korzysta z konta Microsoft ani API Azure. Jeśli wcześniej wgrano v2.3, usuń w GitHub pliki `functions/api/azure-speech.js`, `src/azure-speech.js` oraz `tests/azure-speech.test.js`; samo wgranie ZIP nie usuwa starych plików. Starsze paczki zachowano w katalogu wydań.

@@ -26,12 +26,21 @@ export async function onRequestPost({ request, env }) {
       binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     }
     const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
-      audio: btoa(binary), task: 'transcribe', language: 'pl', vad_filter: true,
+      audio: btoa(binary), task: 'transcribe', language: 'pl', vad_filter: false,
       condition_on_previous_text: false,
     });
     return json({ text: typeof result?.text === 'string' ? result.text.trim().slice(0, 1000) : '' });
-  } catch {
-    return json({ error: 'Cloudflare nie rozpoznał tego fragmentu dźwięku.' }, 502);
+  } catch (problem) {
+    const detail = String(problem?.message || '');
+    const code = Number(problem?.code || problem?.status || 0);
+    if (code === 3036 || /daily free allocation|quota|neurons|limit exceeded/i.test(detail)) {
+      return json({ error: 'Wyczerpano dzienny limit transkrypcji Cloudflare. Przełączam na rozpoznawanie przeglądarki.', code: 'QUOTA' }, 429);
+    }
+    if (code === 3040 || /capacity|too many requests|rate limit/i.test(detail)) {
+      return json({ error: 'Cloudflare jest chwilowo przeciążony. Przełączam na rozpoznawanie przeglądarki.', code: 'CAPACITY' }, 503);
+    }
+    console.error('Transkrypcja Workers AI:', code || 'UNKNOWN', detail.slice(0, 180));
+    return json({ error: 'Cloudflare nie rozpoznał fragmentu dźwięku.', code: 'TRANSCRIPTION_FAILED' }, 502);
   }
 }
 
