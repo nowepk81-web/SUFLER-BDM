@@ -1,34 +1,26 @@
 # Publikacja BDM Live Coach z GitHub przez Cloudflare Pages
 
-W tym wariancie Cloudflare buduje aplikację z repozytorium. Na komputerze nie trzeba instalować Node.js. Potrzebne są: konto GitHub, konto Cloudflare i klucz DeepSeek. Klucz nie może trafić do repozytorium.
+W tym wariancie Cloudflare buduje aplikację z repozytorium. Na komputerze nie trzeba instalować Node.js. Obecna aplikacja działa w projekcie `sufler-bdm` pod `https://sufler-bdm.pages.dev`, połączonym z repozytorium `nowepk81-web/SUFLER-BDM`. Klucz DeepSeek nie może trafić do repozytorium.
 
-## 1. Utwórz repozytorium GitHub
+## 1. Aktualizuj istniejące repozytorium GitHub
 
-1. Pobierz i rozpakuj `BDM-Live-Coach-github.zip`.
-2. Na GitHub wybierz **New repository**. Zalecane ustawienie: **Private**.
-3. Utwórz repozytorium bez dodawania README, `.gitignore` ani licencji (są już w paczce).
-4. Dodaj do repozytorium zawartość folderu `web` — tak, aby `package.json`, `src/` i `functions/` znajdowały się w katalogu głównym repozytorium, nie w dodatkowym folderze `web/`.
-5. Zatwierdź zmiany (Commit). Klucz DeepSeek wpisuje się wyłącznie w Cloudflare, nigdy w GitHub.
+1. Rozpakuj dostarczoną paczkę ZIP na komputerze. Do GitHub dodawaj **rozpakowane pliki i foldery**, nie sam plik ZIP.
+2. W repozytorium `SUFLER-BDM` zastąp pliki o tych samych ścieżkach zawartością paczki: `src/`, `functions/`, `lib/`, `public/`, `package.json`, `index.html`, `vite.config.js`, `wrangler.toml`, `README.md`, `CLOUDFLARE_GITHUB.md`.
+3. Upewnij się, że `package.json`, `src/` i `functions/` znajdują się **w głównym katalogu repozytorium**, bez dodatkowego poziomu `aplikacja/`.
+4. Zatwierdź zmiany w gałęzi `main`. Cloudflare automatycznie pobierze commit i wdroży nową wersję.
 
-## 2. Połącz GitHub z Cloudflare Pages
+Nie wgrywaj `node_modules`, `dist`, `.dev.vars`, `pnpm-lock.yaml`, surowych transkrypcji ani `oferta cała.pdf`. Repozytorium jest publiczne; ceny katalogowe z oferty są zapisane w `lib/offer-knowledge.js` i będą widoczne w kodzie.
 
-1. Zaloguj się do Cloudflare Dashboard → **Workers & Pages** → **Create application** → **Pages** → **Connect to Git**.
-2. Wybierz GitHub i autoryzuj dostęp Cloudflare tylko do repozytorium aplikacji.
-3. Wybierz utworzone repozytorium i skonfiguruj build:
-   - Project name: `bdm-live-coach` (albo inna dostępna nazwa),
-   - Production branch: `main` (lub nazwa głównej gałęzi),
-   - Framework preset: **Vite**,
-   - Build command: `npm run build`,
-   - Build output directory: `dist`,
-   - Root directory: `/` (domyślna; repozytorium ma zawierać bezpośrednio pliki z folderu `web`).
-4. Kliknij **Save and Deploy**. Cloudflare zainstaluje zależności i zbuduje stronę. Funkcje `/api/coach` i `/api/transcribe` zostaną wdrożone razem z Pages.
+## 2. Sprawdź istniejącą konfigurację Cloudflare Pages
+
+W **Workers & Pages → sufler-bdm → Settings** sprawdź: gałąź produkcyjna `main`, polecenie budowania `npm run build`, katalog wynikowy `dist`, katalog główny `/`. Wdrożenie musi zawierać Pages Functions `/api/coach` i `/api/transcribe`. Nie twórz drugiego projektu, jeśli `sufler-bdm` już działa.
 
 ## 3. Dodaj klucz DeepSeek jako sekret
 
-Po utworzeniu projektu otwórz **Workers & Pages → bdm-live-coach → Settings → Variables and Secrets** (czasem sekcja nazywa się **Environment variables**).
+Otwórz **Workers & Pages → sufler-bdm → Settings → Variables and Secrets** (czasem sekcja nazywa się **Environment variables**).
 
 1. Wybierz **Add**, typ **Secret**.
-2. Ustaw nazwę dokładnie `DEEPSEEK_API_KEY` i wklej wartość klucza DeepSeek.
+2. Ustaw nazwę dokładnie `DEEPSEEK_API_KEY` i wklej wartość klucza DeepSeek. Jeśli sekret już istnieje, nie dodawaj go ponownie.
 3. Zastosuj sekret do **Production**. Preview dodaj tylko, jeśli chcesz testować wdrożenia preview.
 4. Zapisz zmiany i wykonaj **Retry deployment** lub nowy commit, aby uruchomić nowy deploy ze skonfigurowanym sekretem.
 
@@ -44,10 +36,16 @@ Workers AI nalicza użycie modelu rozpoznawania mowy; Cloudflare opisuje dzienny
 
 ## 5. Sprawdź działanie
 
+### Opcjonalnie: Azure Speech jako zapasowa transkrypcja
+
+Utwórz zasób **Azure AI Speech** w planie **Free (F0)**. Z panelu zasobu skopiuj klucz i region. W projekcie Cloudflare Pages dodaj w **Settings → Variables and Secrets** dwa sekrety produkcyjne: `AZURE_SPEECH_KEY` (klucz zasobu) i `AZURE_SPEECH_REGION` (kod regionu, np. `westeurope`). Następnie uruchom nowe wdrożenie. Nie umieszczaj tych wartości w GitHub ani w plikach `VITE_*`.
+
+Endpoint `/api/azure-speech` powinien wtedy odpowiadać `{"available":true}`. Kolejność nasłuchu: Cloudflare, w razie awarii Azure, na końcu rozpoznawanie przeglądarki. Bez skonfigurowanego Azure aplikacja pomija ten krok. Azure wydaje przeglądarce krótkotrwały token; ponieważ aplikacja jest publiczna i nie ma logowania, osoby z linkiem mogą zużywać bezpłatny limit. Monitoruj wykorzystanie zasobu i zastosuj reguły ograniczające ruch Cloudflare. W planie F0 po wyczerpaniu przydziału Azure przestanie rozpoznawać mowę, a aplikacja spróbuje metody przeglądarki.
+
 1. Otwórz domenę `*.pages.dev` pokazaną w Cloudflare.
 2. Zezwól przeglądarce na mikrofon i uruchom nasłuch.
-3. Po około 5 sekundach mówienia otwórz **Pokaż kontekst** i sprawdź, czy pojawia się tekst. Status pod przyciskiem pokaże, która usługa rozpoznaje mowę.
-4. Jeśli tekst jest widoczny, ale nie ma porad, sprawdź sekret `DEEPSEEK_API_KEY` i konto DeepSeek. Porady pojawiają się tylko po istotnym sygnale w rozmowie.
+3. Po kilku sekundach mówienia otwórz **Pokaż kontekst** i sprawdź, czy pojawia się tekst. Status pod przyciskiem pokaże, która usługa rozpoznaje mowę.
+4. Jeśli tekst jest widoczny, ale nie ma porad, wypowiedz testowe zdanie „Czy może mi Pan podać cenę systemu?”. Po istotnym sygnale powinna pojawić się krótka podpowiedź. Gdy jest błąd AI, sprawdź sekret `DEEPSEEK_API_KEY` i konto DeepSeek. Domyślnie aplikacja pozostaje przy „Słuchaj”.
 
 Użytkownicy nie muszą mieć kont Cloudflare, GitHub ani DeepSeek i nie wpisują klucza. Każdy posiadający adres może używać publicznej aplikacji. Bez logowania nie da się całkowicie powstrzymać obcych osób przed wywoływaniem API, więc ustaw limity wydatków/powiadomienia DeepSeek oraz dostępne w planie reguły rate limiting Cloudflare.
 
@@ -59,4 +57,4 @@ Anonimowe wzorce z wcześniejszych rozmów są w `lib/reference-patterns.js`. Zm
 
 ## Dane i prywatność
 
-Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy go nie ma, usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.
+Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu do bazy. Gdy działa powiązanie Workers AI, krótkie fragmenty audio trafiają do Cloudflare w celu transkrypcji. Gdy Cloudflare zawiedzie i Azure jest skonfigurowany, mikrofon przekazuje dźwięk do Azure. W ostatniej kolejności usługa rozpoznawania mowy przeglądarki może przetwarzać audio według własnych zasad. Tekst trafia do DeepSeek tylko po wykryciu istotnego sygnału. Nie można zagwarantować braku retencji po stronie dostawców.
