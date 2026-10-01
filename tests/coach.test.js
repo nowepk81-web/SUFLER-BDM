@@ -50,3 +50,20 @@ test('prośba o test nie jest blokowana obowiązkowymi kryteriami', () => {
   assert.match(result.cards[0].message, /sprawdzenia systemu/);
   assert.doesNotMatch(result.cards[0].message, /Po czym/);
 });
+
+test('pełna odpowiedź o cenie nie jest ucinana po 120 znakach', async () => {
+  const previousFetch = globalThis.fetch;
+  const fullAnswer = 'START kosztuje 249 zł netto miesięcznie w promocji, później 299 zł. CORE zaczyna się od 999 zł. Ostateczny wariant dobierzemy do liczby użytkowników i potrzebnych funkcji.';
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+    notify: true, status: 'Cena', quote: null, memory: '',
+    cards: [{ label: 'ODPOWIEDZ', message: fullAnswer, reason: 'Klient zapytał wprost o cenę.', priority: 'HIGH' }],
+  }) } }] }), { status: 200 });
+  try {
+    const request = new Request('https://sufler-bdm.pages.dev/api/coach', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: 'Ile kosztuje system?', signal: { type: 'PRICE', intent: 'DIRECT_REQUEST', priority: 'HIGH' } }),
+    });
+    const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
+    assert.equal((await response.json()).cards[0].message, fullAnswer);
+  } finally { globalThis.fetch = previousFetch; }
+});

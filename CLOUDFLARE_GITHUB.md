@@ -56,3 +56,9 @@ Aplikacja nie używa logowania ani sesji użytkownika i nie zapisuje transkryptu
 ## Wersja 2.4 — Cloudflare i przeglądarka
 
 Po wdrożeniu stopka pokazuje `v2.4`. Ta wersja nie korzysta z konta Microsoft ani API Azure. Jeśli wcześniej wgrano v2.3, usuń w GitHub pliki `functions/api/azure-speech.js`, `src/azure-speech.js` oraz `tests/azure-speech.test.js`; samo wgranie ZIP nie usuwa starych plików. Starsze paczki zachowano w katalogu wydań.
+
+## Wersja 2.5 — historia sygnałów
+
+Po wdrożeniu stopka pokazuje `v2.5`. Podpowiedź automatycznie przechodzi po 60 sekundach do zwiniętej listy pod głównym kaflem. Przycisk `Auto 60 s` włącza i wyłącza automat, a `Odłóż` przenosi kartę od razu. Powtórzony sygnał ma czerwone oznaczenie. Odpowiedzi nie są obcinane po 120 znakach.
+
+Przy ręcznym wgrywaniu do GitHub zachowaj strukturę katalogów: `src/main.jsx`, `src/styles.css` i `functions/api/coach.js` muszą pozostać w swoich folderach. Pliki o tych samych nazwach wrzucone do głównego katalogu repozytorium nie aktualizują aplikacji.

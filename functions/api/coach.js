@@ -16,7 +16,7 @@ export async function onRequestPost({ request, env }) {
   const allowedIntents = ['MENTION', 'DIRECT_REQUEST', 'OBJECTION', 'COMMITMENT', 'VALUE_CLAIM', 'MONOLOGUE_CANDIDATE', 'PROCESS_FACT'];
   if (!body || typeof body.context !== 'string' || body.context.length < 2 || body.context.length > 3800 ||
       (body.summary !== undefined && (typeof body.summary !== 'string' || body.summary.length > 500)) ||
-      (body.lastAdvice !== undefined && (typeof body.lastAdvice !== 'string' || body.lastAdvice.length > 160)) ||
+      (body.lastAdvice !== undefined && (typeof body.lastAdvice !== 'string' || body.lastAdvice.length > 800)) ||
       !body.signal || !allowedSignals.includes(body.signal.type) ||
       (body.signal.intent !== undefined && !allowedIntents.includes(body.signal.intent)) ||
       (body.signal.requestCount !== undefined && (!Number.isInteger(body.signal.requestCount) || body.signal.requestCount < 1 || body.signal.requestCount > 9))) {
@@ -33,7 +33,7 @@ ZASADY ROZMOWY:
 6. Gdy klient deklaruje zakup lub prosi o umowę, przestań udowadniać zasadność; przejdź do zakresu, osób, terminu i formalności. Gdy odrzuca wątek, odpuść go. Nie wracaj do pytań, na które już odpowiedział.
 7. Nie wiadomo, kto mówi w transkrypcji; nie przypisuj roli bez dowodu. Sygnał lokalny może być błędny. Wzorce dawnych rozmów to hipotezy o zachowaniu, nie fakty obecnego klienta ani dowód funkcji produktu. Pierwszeństwo mają bieżąca rozmowa i aktualna oferta. Nie nazywaj czegoś problemem, jeśli klient tego nie potwierdził.
 
-WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta, message maks. 120 znaków, reason maks. 70, jedno zdanie gotowe do użycia lub bardzo krótka instrukcja STOP połączona z ruchem. quote = dosłowny krótki fragment z bieżącego kontekstu albo null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
+WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta. Zwykłe pytanie: 1–2 krótkie zdania. Odpowiedź wymagająca konkretów, np. ceny: do około 350 znaków, możesz użyć nowej linii dla czytelności. Zawsze kończ pełnym zdaniem; nigdy nie kończ urwaną myślą. reason to jedno krótkie pełne zdanie. Nie powtarzaj w reason treści message. quote = dosłowny krótki fragment z bieżącego kontekstu albo null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
   const reference = formatReferencePatterns(selectReferencePatterns(body.signal.type, body.context, body.summary || ''));
   const offer = formatOfferContext(body.signal.type, `${body.summary || ''} ${body.context}`);
   const controller = new AbortController();
@@ -42,7 +42,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   try {
     upstream = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 520, response_format: { type: 'json_object' },
+      body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 850, response_format: { type: 'json_object' },
         messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy):\n${body.context}\n\nPOTWIERDZONE FAKTY Z AKTUALNEJ OFERTY:\n${offer}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
     });
   } catch { return json({ error: 'Serwis AI nie odpowiedział w ciągu 15 sekund.' }, 504); }
@@ -55,7 +55,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   try { parsed = JSON.parse(result.choices?.[0]?.message?.content || ''); } catch { return json({ error: 'Nie udało się odczytać podpowiedzi AI.' }, 502); }
   if (typeof parsed.status !== 'string' || !Array.isArray(parsed.cards)) return json({ error: 'Nieprawidłowy format odpowiedzi AI.' }, 502);
   let cards = parsed.cards.slice(0, 1).filter((card) => card && typeof card.label === 'string' && typeof card.message === 'string' && typeof card.reason === 'string')
-    .map((card) => ({ label: card.label.slice(0, 60), message: card.message.slice(0, 120), reason: card.reason.slice(0, 70), priority: ['HIGH', 'MEDIUM', 'LOW'].includes(card.priority) ? card.priority : 'MEDIUM' }));
+    .map((card) => ({ label: card.label.slice(0, 60), message: card.message.trim(), reason: card.reason.trim(), priority: ['HIGH', 'MEDIUM', 'LOW'].includes(card.priority) ? card.priority : 'MEDIUM' }));
   const guarded = guardNextMove({ signal: body.signal, cards, notify: parsed.notify !== false, lastAdvice: body.lastAdvice || '' });
   cards = guarded.cards;
   if (guarded.notify && !cards.length) return json({ error: 'AI nie zwróciło prawidłowej podpowiedzi.' }, 502);
@@ -75,7 +75,7 @@ export function guardNextMove({ signal, cards = [], notify = false, lastAdvice =
   if (direct && signal.type === 'TEST_OR_DECISION' && (repeated && (!notify || !message || normalized === old) || /po czym (pan|pani|panstwo)? ?pozna|kryteri|ktore [23]/.test(normalized) || (notify && /\?$/.test(message) && !/mozemy|przejdzmy|potwierdze|udostepni|tak/.test(normalized)))) {
     return { notify: true, status: 'Test · przejdź do działania', cards: [{ label: 'ODPOWIEDZ KRÓTKO', message: 'Przejdźmy do sprawdzenia systemu. Potwierdzę warunki dostępu i termin.', reason: 'Nie blokuj prośby kolejnymi pytaniami.', priority: 'HIGH' }] };
   }
-  if (repeated && message && normalized === old) return { notify: false, cards: [] };
+  if (repeated && message && normalized === old) return { notify: true, cards };
   return { notify, cards };
 }
 
