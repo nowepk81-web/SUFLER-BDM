@@ -45,5 +45,12 @@ export function detectSignal(utterance) {
   if (found(text, /\b(robimy to recznie|robimy recznie|przepisujemy do excela|wklejamy do excela|duzo cv|setki cv|\d{2,4} cv|nie nadazamy|gubimy kandydat\w*)\b/)) {
     return signal('PROCESS_SIGNAL', 'MEDIUM', 'PROCESS_FACT', 'process');
   }
+  // ASR often omits the question mark. Catch ordinary questions too, but skip
+  // technical small talk; DeepSeek still decides whether the speaker needs help.
+  const ordinaryQuestion = /(?:^|[.!?]\s*|\ba\s+|\bprosze\s+(?:powiedziec|wyjasnic)\s+|\bchcial(?:abym|bym)\s+zapytac\s+)(?:czy|jak|jaka|jaki|jakie|kiedy|gdzie|ile|dlaczego|ktory|ktora|ktore|w jaki sposob|co|po co)\b/.test(text) || raw.endsWith('?');
+  const smallTalk = /\b(slychac|widac (mnie|ekran)|dzien dobry|jak sie pan(?:i)? ma|czy polaczenie dziala)\b/.test(text);
+  if (ordinaryQuestion && !smallTalk && text.split(' ').length >= 4) {
+    return signal('GENERAL_QUESTION', 'MEDIUM', 'DIRECT_REQUEST', `question:${text.slice(0, 90)}`);
+  }
   return null;
 }

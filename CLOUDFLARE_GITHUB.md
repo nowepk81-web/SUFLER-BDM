@@ -66,3 +66,7 @@ Przy ręcznym wgrywaniu do GitHub zachowaj strukturę katalogów: `src/main.jsx`
 ## Wersja 2.6 — publiczna baza wiedzy eRecruiter
 
 Aplikacja ma indeks publicznych artykułów z `https://pomoc.erecruiter.pl/pl/` w `lib/help-center-index.js`. Przy pasującym temacie funkcja `functions/api/coach.js` pobiera fragment właściwego artykułu i podaje źródło DeepSeek. Nie potrzeba osobnego klucza API, logowania ani zmian w ustawieniach Cloudflare. Jeśli baza wiedzy chwilowo nie odpowiada, coach korzysta z zapisanej wiedzy ofertowej. Przy wgrywaniu na GitHub dodaj również `lib/help-center.js`, `lib/help-center-index.js` i `scripts/sync-help-center.mjs` w ich folderach. Stopka aplikacji pokaże `v2.6` po wdrożeniu.
+
+## Wersja 2.7 — większa czułość na pytania
+
+Po wdrożeniu stopka pokazuje `v2.7`. Aplikacja domyślnie reaguje także na zwykłe pytania z rozmowy, nie tylko na mocne sygnały sprzedażowe. W oknie „Jak to działa” można wyłączyć tę czułość na czas bieżącej karty. Wgraj również zaktualizowane `src/signal-detector.js`, `src/main.jsx` oraz `functions/api/coach.js`. Więcej wykrytych pytań oznacza więcej wywołań DeepSeek.

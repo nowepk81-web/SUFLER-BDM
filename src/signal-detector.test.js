@@ -20,3 +20,14 @@ test('rozpoznaje wprost powtórzone pytania i nie myli ceny produktu z wynagrodz
   assert.equal(detectSignal('Mam budżet na wynagrodzenia kandydatów.'), null);
   assert.equal(detectSignal('Przeglądamy 400 CV ręcznie.').type, 'PROCESS_SIGNAL');
 });
+
+test('zwykłe pytania także uruchamiają analizę, bez znaku zapytania z ASR', () => {
+  assert.deepEqual(detectSignal('Czy manager może ocenić kandydata w systemie'), {
+    type: 'GENERAL_QUESTION', priority: 'MEDIUM', intent: 'DIRECT_REQUEST',
+    topic: 'question:czy manager moze ocenic kandydata w systemie',
+  });
+  assert.equal(detectSignal('A jak działa wyszukiwanie kandydatów').type, 'GENERAL_QUESTION');
+  assert.equal(detectSignal('Jak działa połączenie z kalendarzem?').type, 'GENERAL_QUESTION');
+  assert.equal(detectSignal('Czy mnie dobrze słychać?'), null);
+  assert.equal(detectSignal('Dzień dobry, słyszymy się dobrze'), null);
+});

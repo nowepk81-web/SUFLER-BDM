@@ -9,7 +9,7 @@ import { mergeTranscript } from './transcript.js';
 
 const quietState = { status: 'Spokojnie słucham', quote: null, cards: [{ label: 'SŁUCHAJ', message: 'Prowadź rozmowę naturalnie. Odezwę się przy ważnym sygnale.', reason: 'Bez podpowiedzi po każdym zdaniu.', priority: 'LOW' }] };
 const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Włącz nasłuch, gdy spotkanie się rozpocznie.', reason: 'Aplikacja poprosi o dostęp do mikrofonu.', priority: 'LOW' }] };
-const signalNames = { PRICE: 'Klient pyta o cenę', OBJECTION: 'Obiekcja klienta', BUYING_SIGNAL: 'Sygnał zakupowy', IMPLEMENTATION: 'Wdrożenie', VALUE: 'Klient wskazuje wartość', TEST_OR_DECISION: 'Test lub decyzja', POSSIBLE_LONG_PRESENTATION: 'Czas oddać głos klientowi', PROCESS_SIGNAL: 'Proces klienta', MANUAL: 'Podpowiedź na prośbę' };
+const signalNames = { PRICE: 'Klient pyta o cenę', OBJECTION: 'Obiekcja klienta', BUYING_SIGNAL: 'Sygnał zakupowy', IMPLEMENTATION: 'Wdrożenie', VALUE: 'Klient wskazuje wartość', TEST_OR_DECISION: 'Test lub decyzja', POSSIBLE_LONG_PRESENTATION: 'Czas oddać głos klientowi', PROCESS_SIGNAL: 'Proces klienta', GENERAL_QUESTION: 'Pytanie w rozmowie', MANUAL: 'Podpowiedź na prośbę' };
 function readableStatus(item) {
   return /^[A-Z_]+$/.test(item.status || '') ? signalNames[item.topic] || 'Ważny sygnał' : item.status;
 }
@@ -38,6 +38,7 @@ function App() {
   const [pastSuggestions, setPastSuggestions] = useState([]);
   const pastSuggestionsRef = useRef([]);
   const [autoArchive, setAutoArchive] = useState(true);
+  const [ordinaryQuestions, setOrdinaryQuestions] = useState(true);
   useEffect(() => { pastSuggestionsRef.current = pastSuggestions; }, [pastSuggestions]);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(false);
@@ -68,6 +69,7 @@ function App() {
   const archiveTimer = useRef(null);
   const activeSuggestion = useRef(null);
   const autoArchiveRef = useRef(true);
+  const ordinaryQuestionsRef = useRef(true);
   const pendingSuggestion = useRef(null);
   const finalResultCount = useRef(0);
   const recentFinals = useRef([]);
@@ -157,7 +159,7 @@ function App() {
       const data = await response.json();
       if (generation !== requestGeneration.current) return;
       if (typeof data.memory === 'string') meetingSummary.current = data.memory.slice(0, 500);
-      if (payload.signal?.priority === 'HIGH' && data.cards?.[0]) data.cards[0].priority = 'HIGH';
+      if ((payload.signal?.priority === 'HIGH' || payload.signal?.type === 'GENERAL_QUESTION') && data.cards?.[0]) data.cards[0].priority = 'HIGH';
       data.topic = payload.signal?.topic || payload.signal?.type || 'manual';
       data.repeatCount = payload.signal?.requestCount || 1;
       if (data.notify !== false) showSuggestion(data);
@@ -193,18 +195,20 @@ function App() {
         recentUtterances.current.push(merged.added);
         recentUtterances.current = recentUtterances.current.slice(-12);
         const signal = detectSignal(merged.added) || (merged.added.length < 100 ? detectSignal(`${previous.slice(-90)} ${merged.added}`) : null);
-        if (signal) {
+        if (signal && (signal.type !== 'GENERAL_QUESTION' || ordinaryQuestionsRef.current)) {
           const topic = signal.topic || signal.type;
           const previousRequest = topicRequests.current[topic];
           const requestCount = previousRequest ? Math.min(previousRequest.count + 1, 9) : 1;
           topicRequests.current[topic] = { count: requestCount, time: now };
           signal.requestCount = requestCount;
           const direct = signal.intent === 'DIRECT_REQUEST' || signal.type === 'BUYING_SIGNAL';
-          const cooldown = direct && requestCount > 1 ? 0 : signal.priority === 'HIGH' ? 6000 : 20000;
-          if (now - (lastSignalAt.current[topic] || 0) >= cooldown) {
+          const cooldown = signal.type === 'GENERAL_QUESTION' ? 6000 : direct && requestCount > 1 ? 0 : signal.priority === 'HIGH' ? 6000 : 20000;
+          const questionGap = signal.type !== 'GENERAL_QUESTION' || now - (lastSignalAt.current.__generalQuestion || 0) >= 6000;
+          if (questionGap && now - (lastSignalAt.current[topic] || 0) >= cooldown) {
             lastSignalAt.current[topic] = now;
+            if (signal.type === 'GENERAL_QUESTION') lastSignalAt.current.__generalQuestion = now;
             const context = recentUtterances.current.join('\n').slice(-3600);
-            analysisQueue.current?.push(JSON.stringify({ summary: meetingSummary.current, context, signal, lastAdvice: displayedMessage.current }), signal.priority === 'HIGH' ? 0 : 650, signal.priority);
+            analysisQueue.current?.push(JSON.stringify({ summary: meetingSummary.current, context, signal, lastAdvice: displayedMessage.current }), signal.priority === 'HIGH' ? 0 : signal.type === 'GENERAL_QUESTION' ? 150 : 650, signal.priority);
           }
         }
       }
@@ -433,8 +437,8 @@ function App() {
 
     <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
-    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.6</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
-    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa kluczy skonfigurowanych po stronie Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu istotnego sygnału; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Gdy temat pasuje do publicznej bazy wiedzy eRecruiter, serwer pobiera fragment artykułu i pokazuje link do źródła. Ceny i dostępność w pakietach nadal pochodzą z aktualnej oferty.</span></div><div className="privacy-item"><Mic size={17}/><span>Najpierw krótkie fragmenty dźwięku trafiają do Cloudflare Workers AI. Jeśli Cloudflare zawiedzie, aplikacja przełączy się na rozpoznawanie mowy przeglądarki, które może przekazywać audio do swojego dostawcy. Aplikacja nie zapisuje nagrania. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
+    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.7</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
+    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa kluczy skonfigurowanych po stronie Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><label className="question-mode"><input type="checkbox" checked={ordinaryQuestions} onChange={(event) => { ordinaryQuestionsRef.current = event.target.checked; setOrdinaryQuestions(event.target.checked); }}/><span>Reaguj także na zwykłe pytania podczas rozmowy</span></label><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu ważnego sygnału lub pytania; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Gdy temat pasuje do publicznej bazy wiedzy eRecruiter, serwer pobiera fragment artykułu i pokazuje link do źródła. Ceny i dostępność w pakietach nadal pochodzą z aktualnej oferty.</span></div><div className="privacy-item"><Mic size={17}/><span>Najpierw krótkie fragmenty dźwięku trafiają do Cloudflare Workers AI. Jeśli Cloudflare zawiedzie, aplikacja przełączy się na rozpoznawanie mowy przeglądarki, które może przekazywać audio do swojego dostawcy. Aplikacja nie zapisuje nagrania. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
   </main>;
 }
 
