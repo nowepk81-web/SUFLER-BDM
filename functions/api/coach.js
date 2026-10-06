@@ -1,5 +1,6 @@
 import { formatReferencePatterns, selectReferencePatterns } from '../../lib/reference-patterns.js';
 import { formatOfferContext } from '../../lib/offer-knowledge.js';
+import { loadHelpArticle, selectHelpArticle } from '../../lib/help-center.js';
 
 export async function onRequestPost({ request, env }) {
   const apiKey = env.DEEPSEEK_API_KEY;
@@ -32,10 +33,14 @@ ZASADY ROZMOWY:
 5. Jeśli faktu nie ma w ofercie (np. warunki lub długość testu, rabat, dokładny termin), NIE wymyślaj go. Podpowiedz krótką odpowiedź typu „Sprawdzę dokładne warunki i wrócę z informacją”, po czym zaproponuj konkretny następny krok. Nie obiecuj niepotwierdzonych funkcji ani wyników ROI.
 6. Gdy klient deklaruje zakup lub prosi o umowę, przestań udowadniać zasadność; przejdź do zakresu, osób, terminu i formalności. Gdy odrzuca wątek, odpuść go. Nie wracaj do pytań, na które już odpowiedział.
 7. Nie wiadomo, kto mówi w transkrypcji; nie przypisuj roli bez dowodu. Sygnał lokalny może być błędny. Wzorce dawnych rozmów to hipotezy o zachowaniu, nie fakty obecnego klienta ani dowód funkcji produktu. Pierwszeństwo mają bieżąca rozmowa i aktualna oferta. Nie nazywaj czegoś problemem, jeśli klient tego nie potwierdził.
+8. Publiczna baza wiedzy służy do wyjaśniania działania funkcji. Nie zakładaj, że opisana funkcja jest w każdym pakiecie. Gdy artykuł i oferta różnią się w sprawie ceny lub zakresu pakietu, trzymaj się aktualnej oferty; jeśli różnica jest istotna, zaznacz potrzebę potwierdzenia.
 
 WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta. Zwykłe pytanie: 1–2 krótkie zdania. Odpowiedź wymagająca konkretów, np. ceny: do około 350 znaków, możesz użyć nowej linii dla czytelności. Zawsze kończ pełnym zdaniem; nigdy nie kończ urwaną myślą. reason to jedno krótkie pełne zdanie. Nie powtarzaj w reason treści message. quote = dosłowny krótki fragment z bieżącego kontekstu albo null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
   const reference = formatReferencePatterns(selectReferencePatterns(body.signal.type, body.context, body.summary || ''));
   const offer = formatOfferContext(body.signal.type, `${body.summary || ''} ${body.context}`);
+  const helpQuery = body.context.split('\n').slice(-2).join(' ').slice(-650);
+  const helpMatch = selectHelpArticle(helpQuery, body.signal.type);
+  const help = helpMatch ? await loadHelpArticle(helpMatch, helpQuery).catch(() => null) : null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   let upstream;
@@ -43,7 +48,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
     upstream = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 850, response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy):\n${body.context}\n\nPOTWIERDZONE FAKTY Z AKTUALNEJ OFERTY:\n${offer}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy):\n${body.context}\n\nPOTWIERDZONE FAKTY Z AKTUALNEJ OFERTY (rozstrzygają ceny i zakres pakietów):\n${offer}\n\nPUBLICZNA BAZA WIEDZY ERECRUITER (instrukcja działania funkcji, nie potwierdzenie ceny lub dostępności w pakiecie):\n${help ? `Artykuł: ${help.title}; aktualizacja: ${help.updated}; URL: ${help.url}\nFragmenty:\n${help.excerpt}` : '(brak pasującego lub dostępnego artykułu; nie zgaduj)'}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
     });
   } catch { return json({ error: 'Serwis AI nie odpowiedział w ciągu 15 sekund.' }, 504); }
   finally { clearTimeout(timeout); }
@@ -60,7 +65,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   cards = guarded.cards;
   if (guarded.notify && !cards.length) return json({ error: 'AI nie zwróciło prawidłowej podpowiedzi.' }, 502);
   const quote = typeof parsed.quote === 'string' && body.context.includes(parsed.quote.trim()) ? parsed.quote.trim().slice(-160) : null;
-  return json({ notify: guarded.notify, status: guarded.status || parsed.status.slice(0, 100), quote, memory: typeof parsed.memory === 'string' ? parsed.memory.slice(0, 400) : '', cards }, 200);
+  return json({ notify: guarded.notify, status: guarded.status || parsed.status.slice(0, 100), quote, memory: typeof parsed.memory === 'string' ? parsed.memory.slice(0, 400) : '', cards, source: help ? { title: help.title, url: help.url, updated: help.updated } : null }, 200);
 }
 
 export function guardNextMove({ signal, cards = [], notify = false, lastAdvice = '' }) {

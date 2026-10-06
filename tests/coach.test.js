@@ -1,6 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardNextMove, onRequestPost } from '../functions/api/coach.js';
+import { selectHelpArticle } from '../lib/help-center.js';
+
+test('publiczny artykuł trafia do analizy i ma link w odpowiedzi', async () => {
+  const previousFetch = globalThis.fetch;
+  const match = selectHelpArticle('Jaką rolę przydzielić managerowi?', 'MANUAL');
+  let aiPrompt = '';
+  globalThis.fetch = async (url, options) => {
+    if (String(url).startsWith('https://pomoc.erecruiter.pl/')) {
+      const articleId = match.url.match(/\/articles\/(\d+)/)[1];
+      return new Response(`<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { articleContent: {
+        articleId, title: match.title, blocks: [{ text: 'Manager może oceniać kandydatów w systemie po przydzieleniu odpowiedniej roli.' }],
+      } } } })}</script>`);
+    }
+    aiPrompt = JSON.parse(options.body).messages[1].content;
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      notify: true, status: 'Manager', quote: null, memory: '',
+      cards: [{ label: 'ODPOWIEDZ', message: 'Dostęp zależy od roli managera.', reason: 'Klient pyta o współpracę.', priority: 'HIGH' }],
+    }) } }] }), { status: 200 });
+  };
+  try {
+    const request = new Request('https://sufler-bdm.pages.dev/api/coach', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: 'Jaką rolę przydzielić managerowi?', signal: { type: 'MANUAL', intent: 'DIRECT_REQUEST', priority: 'HIGH' } }),
+    });
+    const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.match(aiPrompt, /Manager może oceniać kandydatów/);
+    assert.equal(result.source.url, match.url);
+  } finally { globalThis.fetch = previousFetch; }
+});
 
 test('do DeepSeek trafia tylko bieżący kontekst i trafna anonimowa analogia', async () => {
   const previousFetch = globalThis.fetch;

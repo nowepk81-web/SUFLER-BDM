@@ -62,3 +62,7 @@ Po wdrożeniu stopka pokazuje `v2.4`. Ta wersja nie korzysta z konta Microsoft a
 Po wdrożeniu stopka pokazuje `v2.5`. Podpowiedź automatycznie przechodzi po 60 sekundach do zwiniętej listy pod głównym kaflem. Przycisk `Auto 60 s` włącza i wyłącza automat, a `Odłóż` przenosi kartę od razu. Powtórzony sygnał ma czerwone oznaczenie. Odpowiedzi nie są obcinane po 120 znakach.
 
 Przy ręcznym wgrywaniu do GitHub zachowaj strukturę katalogów: `src/main.jsx`, `src/styles.css` i `functions/api/coach.js` muszą pozostać w swoich folderach. Pliki o tych samych nazwach wrzucone do głównego katalogu repozytorium nie aktualizują aplikacji.
+
+## Wersja 2.6 — publiczna baza wiedzy eRecruiter
+
+Aplikacja ma indeks publicznych artykułów z `https://pomoc.erecruiter.pl/pl/` w `lib/help-center-index.js`. Przy pasującym temacie funkcja `functions/api/coach.js` pobiera fragment właściwego artykułu i podaje źródło DeepSeek. Nie potrzeba osobnego klucza API, logowania ani zmian w ustawieniach Cloudflare. Jeśli baza wiedzy chwilowo nie odpowiada, coach korzysta z zapisanej wiedzy ofertowej. Przy wgrywaniu na GitHub dodaj również `lib/help-center.js`, `lib/help-center-index.js` i `scripts/sync-help-center.mjs` w ich folderach. Stopka aplikacji pokaże `v2.6` po wdrożeniu.

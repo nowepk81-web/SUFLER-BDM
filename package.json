@@ -1,6 +1,6 @@
 {
   "name": "bdm-live-coach-web",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "dev:pages": "npm run build && wrangler pages dev dist --compatibility-date=2026-09-27",
     "build": "vite build",
     "test": "node --test --test-isolation=none",
+    "knowledge:refresh": "node scripts/sync-help-center.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler pages deploy dist --project-name sufler-bdm",
     "secret:set": "wrangler pages secret put DEEPSEEK_API_KEY --project-name sufler-bdm"
