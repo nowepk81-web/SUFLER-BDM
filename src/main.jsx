@@ -1,20 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ArrowRight, Check, ChevronDown, CircleHelp, Mic, MicOff, Radio, RotateCcw, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Activity, ArrowRight, CircleHelp, Mic, MicOff, RotateCcw, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import './styles.css';
 import { createAnalysisQueue } from './analysis-queue.js';
 import { detectSignal } from './signal-detector.js';
 import { startCloudflareSpeech } from './cloudflare-speech.js';
 import { mergeTranscript } from './transcript.js';
-import { advicePreview } from './advice-preview.js';
+import { glanceAdvice } from './glance-advice.js';
 
-const quietState = { status: 'Spokojnie słucham', quote: null, cards: [{ label: 'SŁUCHAJ', message: 'Prowadź rozmowę naturalnie. Odezwę się przy ważnym sygnale.', reason: 'Bez podpowiedzi po każdym zdaniu.', priority: 'LOW' }] };
-const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Włącz nasłuch, gdy spotkanie się rozpocznie.', reason: 'Aplikacja poprosi o dostęp do mikrofonu.', priority: 'LOW' }] };
-const signalNames = { PRICE: 'Pytanie o cenę', OBJECTION: 'Obawa lub ograniczenie', BUYING_SIGNAL: 'Możliwy sygnał zakupowy', IMPLEMENTATION: 'Wdrożenie', VALUE: 'Nazwana wartość', NEED: 'Potrzeba zmiany', TEST_OR_DECISION: 'Test lub decyzja', POSSIBLE_LONG_PRESENTATION: 'Możliwa długa prezentacja', PROCESS_SIGNAL: 'Fakt o procesie', GENERAL_QUESTION: 'Pytanie w rozmowie', MANUAL: 'Podpowiedź na prośbę' };
+const quietState = { status: 'Słucham', quote: null, cards: [{ label: 'SŁUCHAJ', message: 'Słucham.', reason: '', priority: 'LOW' }] };
+const initialState = { status: 'Gotowy', quote: null, cards: [{ label: 'START', message: 'Włącz nasłuch.', reason: '', priority: 'LOW' }] };
 const emptyMetrics = () => ({ fragments: 0, asrTimed: 0, asrMs: 0, signals: 0, analyses: 0, aiResponses: 0, shown: 0, quiet: 0, stale: 0, skipped: 0, errors: 0, aiMs: 0 });
-function readableStatus(item) {
-  return /^[A-Z_]+$/.test(item.status || '') ? signalNames[item.topic] || 'Ważny sygnał' : item.status;
-}
 
 async function probeCloudflare() {
   const controller = new AbortController();
@@ -44,7 +40,6 @@ function App() {
   const [ordinaryQuestions, setOrdinaryQuestions] = useState(true);
   useEffect(() => { pastSuggestionsRef.current = pastSuggestions; }, [pastSuggestions]);
   const [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -458,27 +453,24 @@ function App() {
     </section>
 
     <section className="coach-section">
-      <div className="section-heading"><div><div className="section-kicker"><Radio size={14}/> PODPOWIEDŹ NA TERAZ</div><h2>Twój następny ruch</h2></div><div className="heading-actions"><button className="suggest-now" onClick={suggestNow} disabled={!listening && !recentUtterances.current.length}><Sparkles size={15}/> Podpowiedz teraz</button><button className="subtle-button" onClick={resetSession} title="Nowa sesja"><RotateCcw size={15}/> Nowa sesja</button></div></div>
-      <article className={`insight-card ${state === quietState ? 'is-quiet' : ''} ${state.repeatCount > 1 ? 'is-repeated' : ''}`}>
-        <div className="insight-top"><span className="priority-mark"><Sparkles size={15}/></span><span className="status-label">{readableStatus(state)}</span><span className="live-pulse"/></div>
-        {state.repeatCount > 1 && <div className="repeat-alert">↻ Sygnał powtórzył się {state.repeatCount} razy — warto zareagować teraz.</div>}
-        {state.cards?.slice(0, 3).map((card, index) => <div className={`suggestion ${index === 0 ? 'primary-suggestion' : ''}`} key={`${card.label}-${index}`}>
-          <div className="suggestion-label">{card.label}</div><p>{advicePreview(card.message).text}</p>
-          {(advicePreview(card.message).shortened || card.reason || state.quote) && <details className="advice-detail"><summary>{advicePreview(card.message).shortened ? 'Pełna podpowiedź i powód' : 'Dlaczego ta podpowiedź?'}</summary>{advicePreview(card.message).shortened && <p>{card.message}</p>}{state.quote && <blockquote>„{state.quote}”</blockquote>}{card.reason && <div className="why-line"><ArrowRight size={13}/>{card.reason}</div>}</details>}
-        </div>)}
-        <div className="card-foot"><span><Check size={13}/> {listening ? 'Nowy sygnał może zastąpić tę podpowiedź.' : 'Krótko. Naturalnie. Do użycia od razu.'}</span><div className="card-actions">{listening && <button className={`auto-archive-toggle ${autoArchive ? 'enabled' : ''}`} onClick={toggleAutoArchive} aria-pressed={autoArchive}>Auto 60 s: {autoArchive ? 'wł.' : 'wył.'}</button>}{listening && activeSuggestion.current && <button onClick={() => { clearTimeout(displayTimer.current); pendingSuggestion.current = null; archiveSuggestion(); }}>Odłóż</button>}<button onClick={() => setExpanded(!expanded)}>{expanded ? 'Mniej' : 'Pokaż kontekst'}<ChevronDown size={14} className={expanded ? 'rotate' : ''}/></button></div></div>
-        {expanded && <div className="context-panel">{transcript || interimText ? `${transcript.slice(-1200)} ${interimText}`.trim() : 'Gdy nasłuch jest aktywny, ostatni fragment rozmowy pojawi się tutaj. Nie zapisujemy go po zakończeniu sesji.'}</div>}
+      <div className="section-heading"><h2>Teraz</h2><div className="heading-actions"><button className="suggest-now" onClick={suggestNow} disabled={!listening && !recentUtterances.current.length}><Sparkles size={15}/> Podpowiedz teraz</button><button className="subtle-button" onClick={resetSession} title="Nowa sesja"><RotateCcw size={15}/> Nowa sesja</button></div></div>
+      <article className={`insight-card glance-card ${state === quietState ? 'is-quiet' : ''} ${state.repeatCount > 1 ? 'is-repeated' : ''}`} aria-live="polite">
+        {state.repeatCount > 1 && <span className="repeat-chip">↻ Powtórzony temat</span>}
+        <p className="glance-message">{glanceAdvice(state.cards?.[0]?.message, state.topic === 'price' ? 120 : 95)}</p>
+        {listening && activeSuggestion.current && <button className="dismiss-advice" onClick={() => { clearTimeout(displayTimer.current); pendingSuggestion.current = null; archiveSuggestion(); }}>Odłóż</button>}
       </article>
-      {pastSuggestions.length > 0 && <section className="past-signals" aria-label="Wcześniejsze sygnały"><div className="past-signals-title">Wcześniejsze podpowiedzi · {pastSuggestions.length}</div>{pastSuggestions.map((item, index) => <details className={`past-signal ${item.repeatCount > 1 ? 'is-repeated' : ''}`} key={`${item.topic}-${index}`}><summary><span className="past-signal-text"><strong>{item.repeatCount > 1 ? '↻ POWTÓRZONY' : readableStatus(item)}</strong><span>{advicePreview(item.cards?.[0]?.message, 95).text}</span></span><ChevronDown size={14}/></summary><div className="past-signal-detail"><p>{item.cards?.[0]?.message}</p>{item.quote && <blockquote>„{item.quote}”</blockquote>}{item.cards?.[0]?.reason}</div></details>)}</section>}
+      {pastSuggestions.length > 0 && <section className="past-signals" aria-label="Wcześniejsze podpowiedzi"><div className="past-signals-title">Wcześniej · {pastSuggestions.length}</div>{pastSuggestions.map((item, index) => <div className={`past-signal glance-history ${item.repeatCount > 1 ? 'is-repeated' : ''}`} key={`${item.topic}-${index}`}><span>{item.repeatCount > 1 ? '↻ ' : ''}{glanceAdvice(item.cards?.[0]?.message, item.topic === 'price' ? 120 : 95)}</span></div>)}</section>}
+      <details className="context-debug"><summary>Kontekst (opcjonalnie)</summary><div className="context-panel">{transcript || interimText ? `${transcript.slice(-1200)} ${interimText}`.trim() : 'Ostatni fragment rozmowy pojawi się tutaj po włączeniu nasłuchu.'}</div></details>
     </section>
 
     <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
-    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.8</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
+    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.9</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
     {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}>
       <div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div>
       <p>Nie musisz zakładać konta ani wpisywać klucza API. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p>
       <label className="question-mode"><input type="checkbox" checked={ordinaryQuestions} onChange={(event) => { ordinaryQuestionsRef.current = event.target.checked; setOrdinaryQuestions(event.target.checked); }}/><span>Reaguj także na zwykłe pytania podczas rozmowy</span></label>
+      <label className="question-mode"><input type="checkbox" checked={autoArchive} onChange={toggleAutoArchive}/><span>Przenoś podpowiedź do historii po 60 sekundach</span></label>
       <div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek pozostaje w Cloudflare. Audio trafia do usługi transkrypcji, a ostatni kontekst do DeepSeek po sygnale lub naciśnięciu „Podpowiedz teraz”. Dostawcy mogą stosować własne zasady retencji.</span></div>
       <div className="privacy-item"><Sparkles size={17}/><span>Coach korzysta z anonimowych analiz wcześniejszych rozmów, nie z surowych transkrypcji. Ceny katalogowe pochodzą wyłącznie z oferty z 01.04.2026. Funkcje i warunki trzeba potwierdzić; publiczna baza wiedzy nie jest pobierana.</span></div>
       <div className="privacy-item"><Mic size={17}/><span>Cloudflare rozpoznaje krótkie fragmenty audio; po awarii działa zapasowy mechanizm przeglądarki. Aplikacja nie zapisuje nagrania ani historii po zamknięciu karty.</span></div>

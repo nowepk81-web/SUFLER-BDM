@@ -67,4 +67,8 @@ Przy ręcznym wgrywaniu do GitHub zachowaj strukturę katalogów: `src/main.jsx`
 
 Po wdrożeniu stopka pokazuje `v2.8`. Główna karta ma krótki skrót i rozwijaną pełną odpowiedź; przycisk „Podpowiedz teraz” wykorzystuje ostatni kontekst bez wpisywania tekstu. W ustawieniach są anonimowe liczniki etapów i średnie czasy. Rozszerzono wykrywanie naturalnych obaw, potrzeb i wartości. Skrócono fragmenty audio do około 3 sekund. Wcześniejsze analizy rozmów nadal są w `lib/reference-patterns.js`; ceny katalogowe pozostają w `lib/offer-knowledge.js`.
 
-Wersja 2.8 **nie korzysta z publicznej bazy wiedzy eRecruiter**. Po ręcznym wgraniu nowej paczki na GitHub usuń ze starego repozytorium `lib/help-center.js`, `lib/help-center-index.js`, `lib/help-center.test.js` oraz `scripts/sync-help-center.mjs`. Samo dodanie plików z ZIP nie usunie wcześniejszych plików w GitHub. Nie usuwaj `lib/offer-knowledge.js` ani `lib/reference-patterns.js`. Po publikacji sprawdź stopkę `v2.8` i diagnostykę w ustawieniach.
+Wersja 2.9 **nie korzysta z publicznej bazy wiedzy eRecruiter**. Po ręcznym wgraniu nowej paczki na GitHub usuń ze starego repozytorium `lib/help-center.js`, `lib/help-center-index.js`, `lib/help-center.test.js` oraz `scripts/sync-help-center.mjs`. Samo dodanie plików z ZIP nie usunie wcześniejszych plików w GitHub. Nie usuwaj `lib/offer-knowledge.js` ani `lib/reference-patterns.js`. Po publikacji sprawdź stopkę `v2.9` i diagnostykę w ustawieniach.
+
+## Wersja 2.9 — odpowiedź do odczytania jednym spojrzeniem
+
+Po wdrożeniu stopka pokazuje `v2.9`. Główna karta zawiera samo pytanie, zdanie lub krótką instrukcję, bez ukrytej dłuższej odpowiedzi i bez etykiety „ważny sygnał”. Starsze sugestie pozostają w zwartej historii. Wgraj całą zawartość paczki v2.9, zachowując foldery `src`, `functions`, `lib`, `public` i `tests`.

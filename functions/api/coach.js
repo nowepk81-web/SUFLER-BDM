@@ -1,5 +1,6 @@
 import { formatReferencePatterns, selectReferencePatterns } from '../../lib/reference-patterns.js';
 import { formatOfferContext, planPrices } from '../../lib/offer-knowledge.js';
+import { glanceAdvice } from '../../src/glance-advice.js';
 
 export async function onRequestPost({ request, env }) {
   const apiKey = env.DEEPSEEK_API_KEY;
@@ -36,7 +37,7 @@ ZASADY ROZMOWY:
 9. Przy sygnale GENERAL_QUESTION sprawdź, czy to prawdopodobnie pytanie klienta do BDM. Jeśli wygląda na pytanie BDM do klienta albo rozmówca właśnie odpowiada, zachowaj ciszę (notify=false). Nie odpowiadaj za klienta.
 10. Przy sygnale MANUAL BDM poprosił o podpowiedź: zwróć notify=true i jeden konkretny ruch oparty na ostatnim kontekście. Jeśli brak podstaw do odpowiedzi produktowej, zaproponuj krótkie zdanie o potwierdzeniu faktu.
 
-WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta. Zwykłe pytanie: 1–2 krótkie zdania. Odpowiedź wymagająca konkretów, np. ceny: do około 350 znaków, możesz użyć nowej linii dla czytelności. Zawsze kończ pełnym zdaniem; nigdy nie kończ urwaną myślą. reason to jedno krótkie pełne zdanie. Nie powtarzaj w reason treści message. quote = dosłowny krótki fragment z bieżącego kontekstu albo null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
+WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta. Na ekranie będzie widoczne TYLKO message. Podaj wyłącznie gotowe do wypowiedzenia pytanie lub zdanie, albo ultrakrótką instrukcję BDM. Cel: 5–10 słów, maks. 90 znaków; dla ceny maks. 120. Nie pisz „to ważny sygnał”, „klient powiedział”, „zapytaj krótko”, diagnozy ani uzasadnienia w message. Bez wstępu, bez dwóch różnych ruchów, bez urwanej myśli. label, reason i status mogą być pustymi ciągami. quote = null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
   const reference = formatReferencePatterns(selectReferencePatterns(body.signal.type, body.context, body.summary || ''));
   const offer = formatOfferContext(body.signal.type, `${body.summary || ''} ${body.context}`);
   const controller = new AbortController();
@@ -46,7 +47,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   try {
     upstream = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 850, response_format: { type: 'json_object' },
+      body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 550, response_format: { type: 'json_object' },
         messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy, mówca nieznany):\n${body.context}\n\nCENY Z OFERTY (nie potwierdzają funkcji ani warunków):\n${offer || '(brak danych cenowych dla tego pytania)'}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
     });
   } catch { return json({ error: 'Serwis AI nie odpowiedział w ciągu 15 sekund.' }, 504); }
@@ -61,7 +62,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   let cards = parsed.cards.slice(0, 1).filter((card) => card && typeof card.label === 'string' && typeof card.message === 'string' && typeof card.reason === 'string')
     .map((card) => ({ label: card.label.slice(0, 60), message: card.message.trim(), reason: card.reason.trim(), priority: ['HIGH', 'MEDIUM', 'LOW'].includes(card.priority) ? card.priority : 'MEDIUM' }));
   const guarded = guardNextMove({ signal: body.signal, cards, notify: parsed.notify !== false, lastAdvice: body.lastAdvice || '' });
-  cards = guarded.cards;
+  cards = guarded.cards.map((card) => ({ ...card, message: glanceAdvice(card.message, body.signal.type === 'PRICE' ? 120 : 95), label: '', reason: '' }));
   if (guarded.notify && !cards.length) return json({ error: 'AI nie zwróciło prawidłowej podpowiedzi.' }, 502);
   const quote = typeof parsed.quote === 'string' && body.context.includes(parsed.quote.trim()) ? parsed.quote.trim().slice(-160) : null;
   return json({ notify: guarded.notify, status: guarded.status || parsed.status.slice(0, 100), quote, memory: typeof parsed.memory === 'string' ? parsed.memory.slice(0, 400) : '', cards, timings: { aiMs: Date.now() - aiStarted } }, 200);

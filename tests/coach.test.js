@@ -78,7 +78,7 @@ test('prośba o test nie jest blokowana obowiązkowymi kryteriami', () => {
   assert.doesNotMatch(result.cards[0].message, /Po czym/);
 });
 
-test('pełna odpowiedź o cenie nie jest ucinana po 120 znakach', async () => {
+test('cena jest jednym pełnym, szybkim do odczytania zdaniem', async () => {
   const previousFetch = globalThis.fetch;
   const fullAnswer = 'START kosztuje 249 zł netto miesięcznie w promocji, później 299 zł. CORE zaczyna się od 999 zł. Ostateczny wariant dobierzemy do liczby użytkowników i potrzebnych funkcji.';
   globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
@@ -91,7 +91,9 @@ test('pełna odpowiedź o cenie nie jest ucinana po 120 znakach', async () => {
       body: JSON.stringify({ context: 'Ile kosztuje system?', signal: { type: 'PRICE', intent: 'DIRECT_REQUEST', priority: 'HIGH' } }),
     });
     const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
-    assert.equal((await response.json()).cards[0].message, fullAnswer);
+    const message = (await response.json()).cards[0].message;
+    assert.equal(message, 'START kosztuje 249 zł netto miesięcznie w promocji, później 299 zł.');
+    assert.ok(message.length < 140);
   } finally { globalThis.fetch = previousFetch; }
 });
 
@@ -115,5 +117,22 @@ test('nowy sygnał potrzeby używa wzorców, ale nie dostaje pełnej oferty', as
     assert.match(prompt, /Firma może potrzebować ATS lokalnie/);
     assert.doesNotMatch(prompt, /Multipublikacja Plus|START 249 zł/);
     assert.ok((await response.json()).timings.aiMs >= 0);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test('metakomentarz AI nie trafia na kartę zamiast pytania', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+    notify: true, status: 'Ważny sygnał', quote: null, memory: '',
+    cards: [{ label: 'NASTĘPNY RUCH', message: 'To ważny sygnał — klient mówi o CV. Zapytaj krótko: „Ile CV trafia do rozmowy?”', reason: 'Poznaj skalę.', priority: 'HIGH' }],
+  }) } }] }), { status: 200 });
+  try {
+    const request = new Request('https://sufler-bdm.pages.dev/api/coach', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: 'Mamy wiele CV.', signal: { type: 'PROCESS_SIGNAL', priority: 'MEDIUM' } }),
+    });
+    const result = await (await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } })).json();
+    assert.equal(result.cards[0].message, 'Ile CV trafia do rozmowy?');
+    assert.equal(result.cards[0].reason, '');
   } finally { globalThis.fetch = previousFetch; }
 });
