@@ -1,6 +1,5 @@
 import { formatReferencePatterns, selectReferencePatterns } from '../../lib/reference-patterns.js';
-import { formatOfferContext } from '../../lib/offer-knowledge.js';
-import { loadHelpArticle, selectHelpArticle } from '../../lib/help-center.js';
+import { formatOfferContext, planPrices } from '../../lib/offer-knowledge.js';
 
 export async function onRequestPost({ request, env }) {
   const apiKey = env.DEEPSEEK_API_KEY;
@@ -13,7 +12,7 @@ export async function onRequestPost({ request, env }) {
   const declaredLength = Number(request.headers.get('Content-Length') || 0);
   if (declaredLength > 20000) return json({ error: 'Żądanie jest zbyt duże.' }, 413);
   const body = await request.json().catch(() => null);
-  const allowedSignals = ['PRICE', 'OBJECTION', 'BUYING_SIGNAL', 'IMPLEMENTATION', 'VALUE', 'TEST_OR_DECISION', 'POSSIBLE_LONG_PRESENTATION', 'PROCESS_SIGNAL', 'GENERAL_QUESTION', 'MANUAL'];
+  const allowedSignals = ['PRICE', 'OBJECTION', 'BUYING_SIGNAL', 'IMPLEMENTATION', 'VALUE', 'NEED', 'TEST_OR_DECISION', 'POSSIBLE_LONG_PRESENTATION', 'PROCESS_SIGNAL', 'GENERAL_QUESTION', 'MANUAL'];
   const allowedIntents = ['MENTION', 'DIRECT_REQUEST', 'OBJECTION', 'COMMITMENT', 'VALUE_CLAIM', 'MONOLOGUE_CANDIDATE', 'PROCESS_FACT'];
   if (!body || typeof body.context !== 'string' || body.context.length < 2 || body.context.length > 3800 ||
       (body.summary !== undefined && (typeof body.summary !== 'string' || body.summary.length > 500)) ||
@@ -32,24 +31,23 @@ ZASADY ROZMOWY:
 4. Jeśli prośba jest ponowiona lub poprzednia rada nie doprowadziła do odpowiedzi, zmień taktykę: daj dostępną informację, zaproponuj prosty krok i idź dalej. Nie forsuj ponownie pytania o cenę, kryteria testu ani inne pytanie z ostatniej porady. Test jest środkiem, nie przeszkodą: odpowiedz na chęć testu, a kryteria ustal później jednym lekkim pytaniem.
 5. Jeśli faktu nie ma w ofercie (np. warunki lub długość testu, rabat, dokładny termin), NIE wymyślaj go. Podpowiedz krótką odpowiedź typu „Sprawdzę dokładne warunki i wrócę z informacją”, po czym zaproponuj konkretny następny krok. Nie obiecuj niepotwierdzonych funkcji ani wyników ROI.
 6. Gdy klient deklaruje zakup lub prosi o umowę, przestań udowadniać zasadność; przejdź do zakresu, osób, terminu i formalności. Gdy odrzuca wątek, odpuść go. Nie wracaj do pytań, na które już odpowiedział.
-7. Nie wiadomo, kto mówi w transkrypcji; nie przypisuj roli bez dowodu. Sygnał lokalny może być błędny. Wzorce dawnych rozmów to hipotezy o zachowaniu, nie fakty obecnego klienta ani dowód funkcji produktu. Pierwszeństwo mają bieżąca rozmowa i aktualna oferta. Nie nazywaj czegoś problemem, jeśli klient tego nie potwierdził.
-8. Publiczna baza wiedzy służy do wyjaśniania działania funkcji. Nie zakładaj, że opisana funkcja jest w każdym pakiecie. Gdy artykuł i oferta różnią się w sprawie ceny lub zakresu pakietu, trzymaj się aktualnej oferty; jeśli różnica jest istotna, zaznacz potrzebę potwierdzenia.
+7. Nie wiadomo, kto mówi w transkrypcji; nie przypisuj roli bez dowodu. Sygnał lokalny może być błędny. Jeśli nie wiadomo, czy mówi klient czy BDM, podaj neutralną krótką wskazówkę lub notify=false; nie pisz „klient powiedział” bez podstawy. Wzorce dawnych rozmów to hipotezy o zachowaniu, nie fakty obecnego klienta ani dowód funkcji produktu. Nie nazywaj czegoś problemem, jeśli klient tego nie potwierdził.
+8. Nie masz bazy funkcji eRecruiter. Jedynym źródłem faktów produktowych w tym żądaniu są CENY z oferty z datą źródła, tylko jeśli zostały podane niżej. Nigdy nie wyprowadzaj z wcześniejszych transkrypcji aktualnej funkcji, integracji, pakietu lub warunków testu. Na niepotwierdzone pytanie produktowe podpowiedz uczciwą odpowiedź „Potwierdzę to i wrócę z informacją”.
 9. Przy sygnale GENERAL_QUESTION sprawdź, czy to prawdopodobnie pytanie klienta do BDM. Jeśli wygląda na pytanie BDM do klienta albo rozmówca właśnie odpowiada, zachowaj ciszę (notify=false). Nie odpowiadaj za klienta.
+10. Przy sygnale MANUAL BDM poprosił o podpowiedź: zwróć notify=true i jeden konkretny ruch oparty na ostatnim kontekście. Jeśli brak podstaw do odpowiedzi produktowej, zaproponuj krótkie zdanie o potwierdzeniu faktu.
 
 WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:string,cards:[{label:string,message:string,reason:string,priority:"HIGH"|"MEDIUM"|"LOW"}]}. Gdy notify=true: dokładnie jedna karta. Zwykłe pytanie: 1–2 krótkie zdania. Odpowiedź wymagająca konkretów, np. ceny: do około 350 znaków, możesz użyć nowej linii dla czytelności. Zawsze kończ pełnym zdaniem; nigdy nie kończ urwaną myślą. reason to jedno krótkie pełne zdanie. Nie powtarzaj w reason treści message. quote = dosłowny krótki fragment z bieżącego kontekstu albo null. memory maks. 400 znaków i tylko potwierdzone fakty aktualnego spotkania; zachowaj istotne wcześniejsze fakty z wejścia. Gdy brak nowego ruchu: notify=false, cards=[] i zachowaj memory.`;
   const reference = formatReferencePatterns(selectReferencePatterns(body.signal.type, body.context, body.summary || ''));
   const offer = formatOfferContext(body.signal.type, `${body.summary || ''} ${body.context}`);
-  const helpQuery = body.context.split('\n').slice(-2).join(' ').slice(-650);
-  const helpMatch = selectHelpArticle(helpQuery, body.signal.type);
-  const help = helpMatch ? await loadHelpArticle(helpMatch, helpQuery).catch(() => null) : null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
+  const aiStarted = Date.now();
   let upstream;
   try {
     upstream = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: 'deepseek-flash', thinking: { type: 'disabled' }, temperature: 0.2, max_tokens: 850, response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy):\n${body.context}\n\nPOTWIERDZONE FAKTY Z AKTUALNEJ OFERTY (rozstrzygają ceny i zakres pakietów):\n${offer}\n\nPUBLICZNA BAZA WIEDZY ERECRUITER (instrukcja działania funkcji, nie potwierdzenie ceny lub dostępności w pakiecie):\n${help ? `Artykuł: ${help.title}; aktualizacja: ${help.updated}; URL: ${help.url}\nFragmenty:\n${help.excerpt}` : '(brak pasującego lub dostępnego artykułu; nie zgaduj)'}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `Sygnał lokalny (weryfikuj): ${body.signal.type}; intencja: ${body.signal.intent || 'nieznana'}; powtórzenia wątku: ${body.signal.requestCount || 1}.\nOstatnia rada BDM: ${body.lastAdvice || '(brak)'}\nPamięć spotkania: ${body.summary || '(brak)'}\nOstatnie wypowiedzi (ASR może zawierać błędy, mówca nieznany):\n${body.context}\n\nCENY Z OFERTY (nie potwierdzają funkcji ani warunków):\n${offer || '(brak danych cenowych dla tego pytania)'}\n\nAnonimowe analogie z dawnych rozmów (tylko gdy pasują):\n${reference}` }] })
     });
   } catch { return json({ error: 'Serwis AI nie odpowiedział w ciągu 15 sekund.' }, 504); }
   finally { clearTimeout(timeout); }
@@ -66,7 +64,7 @@ WYNIK: wyłącznie JSON {notify:boolean,status:string,quote:string|null,memory:s
   cards = guarded.cards;
   if (guarded.notify && !cards.length) return json({ error: 'AI nie zwróciło prawidłowej podpowiedzi.' }, 502);
   const quote = typeof parsed.quote === 'string' && body.context.includes(parsed.quote.trim()) ? parsed.quote.trim().slice(-160) : null;
-  return json({ notify: guarded.notify, status: guarded.status || parsed.status.slice(0, 100), quote, memory: typeof parsed.memory === 'string' ? parsed.memory.slice(0, 400) : '', cards, source: help ? { title: help.title, url: help.url, updated: help.updated } : null }, 200);
+  return json({ notify: guarded.notify, status: guarded.status || parsed.status.slice(0, 100), quote, memory: typeof parsed.memory === 'string' ? parsed.memory.slice(0, 400) : '', cards, timings: { aiMs: Date.now() - aiStarted } }, 200);
 }
 
 export function guardNextMove({ signal, cards = [], notify = false, lastAdvice = '' }) {
@@ -76,7 +74,7 @@ export function guardNextMove({ signal, cards = [], notify = false, lastAdvice =
   const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').toLocaleLowerCase('pl-PL');
   const old = lastAdvice.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').toLocaleLowerCase('pl-PL');
   if (direct && signal.type === 'PRICE' && (repeated && (!notify || !message || normalized === old) || (notify && !/\d[\d\s]*\s*z[lł]/i.test(message)) || /z czym (pan|pani|panstwo)? ?porown|co musialoby sie wydarzyc|ktory element musialby/.test(normalized))) {
-    return { notify: true, status: 'Cena · odpowiedz i idź dalej', cards: [{ label: 'ODPOWIEDZ KRÓTKO', message: 'START: 249 zł netto/mies. w promocji, potem 299 zł; CORE od 999 zł. Dobierzmy wariant.', reason: 'Klient prosi o konkretną kwotę.', priority: 'HIGH' }] };
+    return { notify: true, status: 'Cena · odpowiedz i idź dalej', cards: [{ label: 'ODPOWIEDZ KRÓTKO', message: `START: ${planPrices.START.price} zł netto/mies. w promocji, potem ${planPrices.START.afterPromotion} zł; CORE od ${planPrices.CORE[0]} zł. Potwierdzę aktualne warunki.`, reason: 'Padła prośba o konkretną kwotę.', priority: 'HIGH' }] };
   }
   if (direct && signal.type === 'TEST_OR_DECISION' && (repeated && (!notify || !message || normalized === old) || /po czym (pan|pani|panstwo)? ?pozna|kryteri|ktore [23]/.test(normalized) || (notify && /\?$/.test(message) && !/mozemy|przejdzmy|potwierdze|udostepni|tak/.test(normalized)))) {
     return { notify: true, status: 'Test · przejdź do działania', cards: [{ label: 'ODPOWIEDZ KRÓTKO', message: 'Przejdźmy do sprawdzenia systemu. Potwierdzę warunki dostępu i termin.', reason: 'Nie blokuj prośby kolejnymi pytaniami.', priority: 'HIGH' }] };

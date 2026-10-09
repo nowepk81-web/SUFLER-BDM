@@ -31,3 +31,13 @@ test('zwykłe pytania także uruchamiają analizę, bez znaku zapytania z ASR', 
   assert.equal(detectSignal('Czy mnie dobrze słychać?'), null);
   assert.equal(detectSignal('Dzień dobry, słyszymy się dobrze'), null);
 });
+
+test('wykrywa naturalne sygnały spotkania bez zakładania mówcy', () => {
+  assert.equal(detectSignal('Budzi to mój niepokój, kiedy wysyłamy CV mailem').type, 'OBJECTION');
+  assert.equal(detectSignal('Potrzebujemy na gwałt jakiegoś ATS-u').type, 'NEED');
+  assert.equal(detectSignal('To jest super').type, 'VALUE');
+  assert.equal(detectSignal('Podoba mi się, że to wszystko jest w jednym miejscu').type, 'VALUE');
+  assert.equal(detectSignal('To jest szybsza obsługa i nie muszę się zastanawiać').type, 'VALUE');
+  assert.equal(detectSignal('W Excelu zbieramy status procesu').type, 'PROCESS_SIGNAL');
+  assert.equal(detectSignal('Mamy globalnie Workday jako ATS').type, 'OBJECTION');
+});

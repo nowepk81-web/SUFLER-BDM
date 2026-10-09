@@ -28,6 +28,16 @@ export function detectSignal(utterance) {
   const objection = found(text, /\b(nie potrzebujemy|nie jest (to )?problem|mamy to poukladane|to nam niepotrzebne|nie przekonuje|nie zadziala|nie mamy (dzis |dzisiaj |teraz )?czasu na wdrozenie|obawiam sie|watpliwosc\w*|za duzo pracy|nie ma sensu|nie widze wartosci)\b/);
   if (objection) return signal('OBJECTION', 'HIGH', 'OBJECTION', 'objection');
 
+  // Natural speech from real meetings often expresses a concern or a need
+  // without the canonical words "obiekcja" / "problem".
+  if (found(text, /\b(budzi (to )?(we mnie |u nas |mi |mnie |moj )?niepokoj|niepokoi (mnie|nas)|martwi (mnie|nas)|boimy sie|blokuje nas|ogranicza nas|globalnie (mamy|jest) (juz )?(wdrozon\w*|workday)|mamy globalnie (workday|ats|system)|mamy (juz )?globaln\w* (system|ats))\b/)) {
+    return signal('OBJECTION', 'HIGH', 'OBJECTION', 'constraint');
+  }
+
+  if (found(text, /\b(potrzebujemy (na gwalt |pilnie |teraz )?(czegos|jakiegos|systemu|ats|narzedzia)|brakuje nam (systemu|ats|narzedzia)|musimy (to|ten proces) (uporzadkowac|usprawnic)|nie mamy (zadnego )?ats)\b/)) {
+    return signal('NEED', 'HIGH', 'VALUE_CLAIM', 'need');
+  }
+
   const implementation = found(text, /\b(wdrozenie|uruchomienie|szkolenia|ilu uzytkownik\w*|kiedy (mozemy|moglibysmy) (zaczac|uruchomic)|jak dlugo trwa wdrozenie|kto bedzie mial dostep)\b/);
   if (implementation) return signal('IMPLEMENTATION', 'HIGH', /\?|\b(kiedy|jak|ilu|kto)\b/.test(text) ? 'DIRECT_REQUEST' : 'MENTION', 'implementation');
 
@@ -35,14 +45,14 @@ export function detectSignal(utterance) {
     return signal('POSSIBLE_LONG_PRESENTATION', 'MEDIUM', 'MONOLOGUE_CANDIDATE', 'presentation');
   }
 
-  const value = found(text, /\b(to (jest|byloby|brzmi) (dla nas )?(bardzo |naprawde )?(wazne|przydatne|sensownie|swietne)|to nam (pomoze|pomogloby|ulatwi|ulatwiloby)|tego (wlasnie )?potrzebujemy|tego nam brakuje|to rozwiazuje|bardzo nam zalezy|przydaloby nam sie|to by mi pomoglo|zabiera (nam )?(bardzo )?duzo czasu)\b/);
+  const value = found(text, /\b(to (jest|byloby|brzmi) (dla nas )?(bardzo |naprawde )?(wazne|przydatne|sensownie|swietne|super)|to nam (pomoze|pomogloby|ulatwi|ulatwiloby)|tego (wlasnie )?potrzebujemy|tego nam brakuje|to rozwiazuje|bardzo nam zalezy|przydaloby nam sie|to by mi pomoglo|zabiera (nam )?(bardzo )?duzo czasu|to jest super|podoba (mi|nam) sie|to wszystko (jest|mamy) w jednym miejscu|nie musze (sie zastanawiac|pamietac|myslec)|szybsza obsluga|sporo czasu (to )?(oszczedzi|zaoszczedzi))\b/);
   if (value) return signal('VALUE', 'HIGH', 'VALUE_CLAIM', 'value');
 
   if (found(text, /\b(testowac|przetestowac|kryteria (wyboru|sukcesu)|porownujemy (systemy|ats)|proces decyzyjny)\b/)) {
     return signal('TEST_OR_DECISION', 'MEDIUM', 'MENTION', 'test');
   }
 
-  if (found(text, /\b(robimy to recznie|robimy recznie|przepisujemy do excela|wklejamy do excela|duzo cv|setki cv|\d{2,4} cv|nie nadazamy|gubimy kandydat\w*)\b/)) {
+  if (found(text, /\b(robimy to recznie|robimy recznie|przepisujemy do excela|wklejamy do excela|w excelu|excel|duzo cv|setki cv|\d{2,4} cv|nie nadazamy|gubimy kandydat\w*|prosimy o usuniecie (maila|cv|danych)|wysylamy (zahaszowane|zaszyfrowane) (maile|cv)|czekam(y)? na informacje|przeciaga (nam )?sie|musze pilnowac)\b/)) {
     return signal('PROCESS_SIGNAL', 'MEDIUM', 'PROCESS_FACT', 'process');
   }
   // ASR often omits the question mark. Catch ordinary questions too, but skip

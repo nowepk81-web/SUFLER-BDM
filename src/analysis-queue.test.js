@@ -44,7 +44,7 @@ test('speech arriving during AI request is retained; stop cancels queued work', 
   const queue = createAnalysisQueue(text => {
     seen.push(text);
     return new Promise(resolve => { release = resolve; });
-  }, timer);
+  }, { ...timer, maxPendingAge: 30000 });
   queue.push('A', 0); await timer.advance(0);
   queue.push('B'); await timer.advance(20000);
   assert.deepEqual(seen, ['A']);
@@ -65,4 +65,18 @@ test('pilny sygnał nie jest nadpisany przez zwykłą wypowiedź i omija odstęp
   queue.push('Pytanie o cenę', 0, 'HIGH');
   await timer.advance(0);
   assert.deepEqual(seen, ['Wartość', 'Pytanie o cenę']);
+});
+
+test('nie uruchamia analizy dawno nieaktualnej wypowiedzi', async () => {
+  const timer = clock(), seen = [], discarded = [];
+  let release;
+  const queue = createAnalysisQueue(text => {
+    seen.push(text);
+    return new Promise(resolve => { release = resolve; });
+  }, { ...timer, maxPendingAge: 5000, onDiscard: reason => discarded.push(reason) });
+  queue.push('Pierwsza', 0, 'HIGH'); await timer.advance(0);
+  queue.push('Już nieaktualna'); await timer.advance(7000);
+  release(); await Promise.resolve(); await timer.advance(0);
+  assert.deepEqual(seen, ['Pierwsza']);
+  assert.ok(discarded.includes('stale'));
 });

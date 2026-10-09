@@ -1,7 +1,7 @@
 class CaptureChunks extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.size = Math.round(sampleRate * 3.6);
+    this.size = Math.round(sampleRate * 3);
     this.samples = new Float32Array(this.size);
     this.offset = 0;
   }

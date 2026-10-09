@@ -1,5 +1,5 @@
 const TARGET_SAMPLE_RATE = 16_000;
-const CHUNK_SECONDS = 3.6;
+const CHUNK_SECONDS = 3;
 
 function wavFromSamples(parts, sampleRate) {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
@@ -27,7 +27,7 @@ function wavFromSamples(parts, sampleRate) {
   return wav;
 }
 
-export async function startCloudflareSpeech({ onText, onStatus, onError }) {
+export async function startCloudflareSpeech({ onText, onStatus, onError, onTiming = () => {} }) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Mikrofon wymaga bezpiecznego połączenia HTTPS i zgody przeglądarki.');
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }, video: false });
   const AudioContextType = window.AudioContext || window.webkitAudioContext;
@@ -64,6 +64,7 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
       active += 1;
       const controller = new AbortController();
       controllers.add(controller);
+      const startedAt = performance.now();
       const timeout = setTimeout(() => controller.abort(), 18000);
       (async () => {
         let result;
@@ -79,6 +80,7 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
           result = { text: typeof data.text === 'string' ? data.text : '' };
         } catch (error) { result = { error: error.message || 'Nie udało się rozpoznać mowy.', code: error.code }; }
         finally {
+          if (!stopped) onTiming({ durationMs: Math.round(performance.now() - startedAt), success: !result?.error });
           clearTimeout(timeout);
           controllers.delete(controller);
           active -= 1;
@@ -102,6 +104,7 @@ export async function startCloudflareSpeech({ onText, onStatus, onError }) {
       completed.set(dropped.id, { text: '' });
       deliver();
       onStatus('Transkrypcja nie nadąża · pominięto fragment');
+      onTiming({ dropped: true });
     }
     pending.push({ id: nextId++, wav });
     onStatus('Rozpoznaję wypowiedź…');

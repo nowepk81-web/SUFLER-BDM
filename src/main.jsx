@@ -6,10 +6,12 @@ import { createAnalysisQueue } from './analysis-queue.js';
 import { detectSignal } from './signal-detector.js';
 import { startCloudflareSpeech } from './cloudflare-speech.js';
 import { mergeTranscript } from './transcript.js';
+import { advicePreview } from './advice-preview.js';
 
 const quietState = { status: 'Spokojnie słucham', quote: null, cards: [{ label: 'SŁUCHAJ', message: 'Prowadź rozmowę naturalnie. Odezwę się przy ważnym sygnale.', reason: 'Bez podpowiedzi po każdym zdaniu.', priority: 'LOW' }] };
 const initialState = { status: 'Gotowy do spotkania', quote: null, cards: [{ label: 'JAK ZACZĄĆ', message: 'Włącz nasłuch, gdy spotkanie się rozpocznie.', reason: 'Aplikacja poprosi o dostęp do mikrofonu.', priority: 'LOW' }] };
-const signalNames = { PRICE: 'Klient pyta o cenę', OBJECTION: 'Obiekcja klienta', BUYING_SIGNAL: 'Sygnał zakupowy', IMPLEMENTATION: 'Wdrożenie', VALUE: 'Klient wskazuje wartość', TEST_OR_DECISION: 'Test lub decyzja', POSSIBLE_LONG_PRESENTATION: 'Czas oddać głos klientowi', PROCESS_SIGNAL: 'Proces klienta', GENERAL_QUESTION: 'Pytanie w rozmowie', MANUAL: 'Podpowiedź na prośbę' };
+const signalNames = { PRICE: 'Pytanie o cenę', OBJECTION: 'Obawa lub ograniczenie', BUYING_SIGNAL: 'Możliwy sygnał zakupowy', IMPLEMENTATION: 'Wdrożenie', VALUE: 'Nazwana wartość', NEED: 'Potrzeba zmiany', TEST_OR_DECISION: 'Test lub decyzja', POSSIBLE_LONG_PRESENTATION: 'Możliwa długa prezentacja', PROCESS_SIGNAL: 'Fakt o procesie', GENERAL_QUESTION: 'Pytanie w rozmowie', MANUAL: 'Podpowiedź na prośbę' };
+const emptyMetrics = () => ({ fragments: 0, asrTimed: 0, asrMs: 0, signals: 0, analyses: 0, aiResponses: 0, shown: 0, quiet: 0, stale: 0, skipped: 0, errors: 0, aiMs: 0 });
 function readableStatus(item) {
   return /^[A-Z_]+$/.test(item.status || '') ? signalNames[item.topic] || 'Ważny sygnał' : item.status;
 }
@@ -36,6 +38,7 @@ function App() {
   const [listening, setListening] = useState(false);
   const [state, setState] = useState(initialState);
   const [pastSuggestions, setPastSuggestions] = useState([]);
+  const [metrics, setMetrics] = useState(emptyMetrics);
   const pastSuggestionsRef = useRef([]);
   const [autoArchive, setAutoArchive] = useState(true);
   const [ordinaryQuestions, setOrdinaryQuestions] = useState(true);
@@ -80,6 +83,14 @@ function App() {
   const meetingSummary = useRef('');
   const lastSignalAt = useRef({});
   const topicRequests = useRef({});
+  const latestSignalTime = useRef(0);
+  const metricRef = useRef(emptyMetrics());
+  const recordMetric = useCallback((patch) => {
+    const next = { ...metricRef.current };
+    for (const [key, value] of Object.entries(patch)) next[key] = (next[key] || 0) + value;
+    metricRef.current = next;
+    setMetrics(next);
+  }, []);
 
   const archiveSuggestion = useCallback(() => {
     clearTimeout(archiveTimer.current);
@@ -140,6 +151,7 @@ function App() {
     const now = Date.now();
     lastRequest.current = now;
     requestInFlight.current = true;
+    recordMetric({ analyses: 1 });
     const generation = requestGeneration.current;
     const controller = new AbortController();
     const interrupt = () => controller.abort();
@@ -153,32 +165,40 @@ function App() {
         const problem = await response.json().catch(() => ({}));
         if (generation !== requestGeneration.current) return;
         setApiMode('błąd połączenia');
+        recordMetric({ errors: 1 });
         setError(problem.error || 'DeepSeek chwilowo nie odpowiada.');
         return;
       }
       const data = await response.json();
       if (generation !== requestGeneration.current) return;
+      if (Number.isFinite(data.timings?.aiMs)) recordMetric({ aiMs: data.timings.aiMs, aiResponses: 1 });
       if (typeof data.memory === 'string') meetingSummary.current = data.memory.slice(0, 500);
       if ((payload.signal?.priority === 'HIGH' || payload.signal?.type === 'GENERAL_QUESTION') && data.cards?.[0]) data.cards[0].priority = 'HIGH';
       data.topic = payload.signal?.topic || payload.signal?.type || 'manual';
       data.repeatCount = payload.signal?.requestCount || 1;
-      if (data.notify !== false) showSuggestion(data);
+      const age = Date.now() - (payload.signal?.detectedAt || now);
+      const outdated = payload.signal?.type !== 'MANUAL' && (age > 22000 || (age > 8500 && latestSignalTime.current > (payload.signal?.detectedAt || now)));
+      if (data.notify !== false && data.cards?.[0] && outdated) {
+        recordMetric({ stale: 1 });
+        setPastSuggestions((items) => [{ ...data, archivedAt: Date.now(), status: 'Wróć, jeśli temat nadal aktualny' }, ...items.filter((item) => item.topic !== data.topic)].slice(0, 8));
+      } else if (data.notify !== false) { recordMetric({ shown: 1 }); showSuggestion(data); }
       else if (data.repeatCount > 1) {
         const earlier = activeSuggestion.current?.topic === data.topic ? activeSuggestion.current : pastSuggestionsRef.current.find((item) => item.topic === data.topic);
         if (earlier) showSuggestion({ ...earlier, status: 'Sygnał pojawił się ponownie', repeatCount: data.repeatCount });
-      }
+      } else recordMetric({ quiet: 1 });
       setApiMode('AI połączone'); setError('');
     } catch {
       if (generation !== requestGeneration.current) return;
       if (interruptSignal?.aborted) return;
       setApiMode('AI chwilowo niedostępne');
+      recordMetric({ errors: 1 });
       setError('Nie udało się pobrać podpowiedzi AI. Nasłuch trwa; spróbuję przy kolejnym ważnym sygnale.');
     } finally {
       clearTimeout(timeout);
       interruptSignal?.removeEventListener('abort', interrupt);
       if (generation === requestGeneration.current) requestInFlight.current = false;
     }
-  }, [showSuggestion]);
+  }, [showSuggestion, recordMetric]);
 
   const acceptFinalText = useCallback((finalChunk) => {
     if (endByUser.current || !finalChunk.trim()) return;
@@ -194,8 +214,12 @@ function App() {
         transcriptRef.current = merged.transcript;
         recentUtterances.current.push(merged.added);
         recentUtterances.current = recentUtterances.current.slice(-12);
-        const signal = detectSignal(merged.added) || (merged.added.length < 100 ? detectSignal(`${previous.slice(-90)} ${merged.added}`) : null);
+        const earlier = recentUtterances.current.slice(-3, -1).join(' ');
+        const boundarySignal = previous && !detectSignal(previous) ? detectSignal(`${previous.slice(-100)} ${merged.added.slice(0, 150)}`) : null;
+        const presentation = detectSignal(`${earlier.slice(-320)} ${merged.added}`);
+        const signal = detectSignal(merged.added) || boundarySignal || (presentation?.type === 'POSSIBLE_LONG_PRESENTATION' ? presentation : null);
         if (signal && (signal.type !== 'GENERAL_QUESTION' || ordinaryQuestionsRef.current)) {
+          recordMetric({ signals: 1 });
           const topic = signal.topic || signal.type;
           const previousRequest = topicRequests.current[topic];
           const requestCount = previousRequest ? Math.min(previousRequest.count + 1, 9) : 1;
@@ -206,6 +230,8 @@ function App() {
           const questionGap = signal.type !== 'GENERAL_QUESTION' || now - (lastSignalAt.current.__generalQuestion || 0) >= 6000;
           if (questionGap && now - (lastSignalAt.current[topic] || 0) >= cooldown) {
             lastSignalAt.current[topic] = now;
+            latestSignalTime.current = now;
+            signal.detectedAt = now;
             if (signal.type === 'GENERAL_QUESTION') lastSignalAt.current.__generalQuestion = now;
             const context = recentUtterances.current.join('\n').slice(-3600);
             analysisQueue.current?.push(JSON.stringify({ summary: meetingSummary.current, context, signal, lastAdvice: displayedMessage.current }), signal.priority === 'HIGH' ? 0 : signal.type === 'GENERAL_QUESTION' ? 150 : 650, signal.priority);
@@ -215,7 +241,7 @@ function App() {
     }
     setTranscript(transcriptRef.current);
     setInterimText('');
-  }, []);
+  }, [recordMetric]);
 
   const onResult = useCallback((event) => {
     if (endByUser.current) return;
@@ -237,9 +263,10 @@ function App() {
     setInterimText(interimRef.current);
     if (finalChunk.trim()) {
       setSpeechStatus('Mowa rozpoznawana przez przeglądarkę');
+      recordMetric({ fragments: 1 });
       acceptFinalText(finalChunk);
     }
-  }, [acceptFinalText]);
+  }, [acceptFinalText, recordMetric]);
 
   useEffect(() => {
     let active = true;
@@ -254,7 +281,7 @@ function App() {
     const generation = ++startGeneration.current;
     if (!preserveSession) {
       analysisQueue.current?.stop();
-      analysisQueue.current = createAnalysisQueue(askApi);
+      analysisQueue.current = createAnalysisQueue(askApi, { onDiscard: () => recordMetric({ skipped: 1 }) });
     }
     interimRef.current = '';
     endByUser.current = false;
@@ -265,6 +292,7 @@ function App() {
       displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0;
       recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {};
       recentFinals.current = [];
+      latestSignalTime.current = 0; metricRef.current = emptyMetrics(); setMetrics(metricRef.current);
     }
     finalResultCount.current = 0; restartAttempts.current = 0;
     transcribeFailures.current = 0;
@@ -275,6 +303,10 @@ function App() {
       try {
         const capture = await startCloudflareSpeech({
           onText: (text) => { transcribeFailures.current = 0; acceptFinalText(text); },
+          onTiming: ({ durationMs, success, dropped }) => {
+            if (dropped) recordMetric({ skipped: 1 });
+            else recordMetric({ fragments: 1, asrTimed: success ? 1 : 0, asrMs: success ? durationMs : 0, errors: success ? 0 : 1 });
+          },
           onStatus: (status) => {
             setSpeechStatus(status);
             if (status.startsWith('Nasłuch działa')) { transcribeFailures.current = 0; setError(''); }
@@ -364,7 +396,7 @@ function App() {
         if (endByUser.current) lock?.release?.(); else wakeLock.current = lock;
       }
     } catch { setError('Nie udało się włączyć mikrofonu. Sprawdź uprawnienia witryny i HTTPS.'); setListening(false); setStarting(false); setSpeechStatus('Mikrofon niedostępny'); }
-  }, [onResult, acceptFinalText, askApi, cloudflareAvailable]);
+  }, [onResult, acceptFinalText, askApi, cloudflareAvailable, recordMetric]);
 
   const stop = useCallback(() => {
     startGeneration.current += 1;
@@ -382,7 +414,7 @@ function App() {
   }, [listening]);
   useEffect(() => () => { endByUser.current = true; startGeneration.current += 1; analysisQueue.current?.stop(); clearTimeout(displayTimer.current); clearTimeout(archiveTimer.current); clearTimeout(restartTimer.current); clearTimeout(startupTimer.current); requestGeneration.current += 1; cloudflareCapture.current?.stop(); recognizer.current?.stop(); wakeLock.current?.release?.(); }, []);
 
-  const resetSession = () => { stop(); activeSuggestion.current = null; setPastSuggestions([]); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {}; setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
+  const resetSession = () => { stop(); activeSuggestion.current = null; setPastSuggestions([]); displayedAt.current = 0; displayedMessage.current = ''; lastRequest.current = 0; transcriptRef.current = ''; recentUtterances.current = []; meetingSummary.current = ''; lastSignalAt.current = {}; topicRequests.current = {}; latestSignalTime.current = 0; metricRef.current = emptyMetrics(); setMetrics(metricRef.current); setTranscript(''); setSessionSeconds(0); setState(initialState); setError(''); };
   const toggleAutoArchive = () => {
     const enabled = !autoArchiveRef.current;
     autoArchiveRef.current = enabled;
@@ -396,9 +428,15 @@ function App() {
   const manualPrompt = (value = manualTopic) => {
     const text = value.trim(); if (!text) return;
     const context = [...recentUtterances.current.slice(-10), `Hasło lub pytanie BDM: ${text}`].join('\n').slice(-3600);
-    const payload = JSON.stringify({ context, summary: meetingSummary.current, lastAdvice: displayedMessage.current, signal: { type: 'MANUAL', intent: 'DIRECT_REQUEST', topic: 'manual', priority: 'HIGH', requestCount: 1 } });
+    const payload = JSON.stringify({ context, summary: meetingSummary.current, lastAdvice: displayedMessage.current, signal: { type: 'MANUAL', intent: 'DIRECT_REQUEST', topic: 'manual', priority: 'HIGH', requestCount: 1, detectedAt: Date.now() } });
     if (listening) analysisQueue.current?.push(payload, 0, 'HIGH'); else askApi(payload);
     setManualTopic('');
+  };
+  const suggestNow = () => {
+    const context = recentUtterances.current.slice(-10).join('\n').slice(-3600);
+    if (context.length < 3) { setError('Jeszcze nie rozpoznano wypowiedzi. Sprawdź status mikrofonu lub wpisz hasło niżej.'); return; }
+    const payload = JSON.stringify({ context, summary: meetingSummary.current, lastAdvice: displayedMessage.current, signal: { type: 'MANUAL', intent: 'DIRECT_REQUEST', topic: 'manual-now', priority: 'HIGH', requestCount: 1, detectedAt: Date.now() } });
+    if (listening) analysisQueue.current?.push(payload, 0, 'HIGH'); else askApi(payload);
   };
 
   return <main className={`app-shell ${listening ? 'live-layout' : ''}`}>
@@ -420,25 +458,33 @@ function App() {
     </section>
 
     <section className="coach-section">
-      <div className="section-heading"><div><div className="section-kicker"><Radio size={14}/> PODPOWIEDŹ NA TERAZ</div><h2>Twój następny ruch</h2></div><button className="subtle-button" onClick={resetSession} title="Nowa sesja"><RotateCcw size={15}/> Nowa sesja</button></div>
+      <div className="section-heading"><div><div className="section-kicker"><Radio size={14}/> PODPOWIEDŹ NA TERAZ</div><h2>Twój następny ruch</h2></div><div className="heading-actions"><button className="suggest-now" onClick={suggestNow} disabled={!listening && !recentUtterances.current.length}><Sparkles size={15}/> Podpowiedz teraz</button><button className="subtle-button" onClick={resetSession} title="Nowa sesja"><RotateCcw size={15}/> Nowa sesja</button></div></div>
       <article className={`insight-card ${state === quietState ? 'is-quiet' : ''} ${state.repeatCount > 1 ? 'is-repeated' : ''}`}>
         <div className="insight-top"><span className="priority-mark"><Sparkles size={15}/></span><span className="status-label">{readableStatus(state)}</span><span className="live-pulse"/></div>
         {state.repeatCount > 1 && <div className="repeat-alert">↻ Sygnał powtórzył się {state.repeatCount} razy — warto zareagować teraz.</div>}
-        {state.quote && <blockquote>„{state.quote}”</blockquote>}
         {state.cards?.slice(0, 3).map((card, index) => <div className={`suggestion ${index === 0 ? 'primary-suggestion' : ''}`} key={`${card.label}-${index}`}>
-          <div className="suggestion-label">{card.label}</div><p>{card.message}</p><div className="why-line"><ArrowRight size={13}/>{card.reason}</div>
-          {index === 0 && state.source?.url && <a className="knowledge-source" href={state.source.url} target="_blank" rel="noopener noreferrer" title={state.source.title}>Sprawdź w bazie eRecruiter ↗</a>}
+          <div className="suggestion-label">{card.label}</div><p>{advicePreview(card.message).text}</p>
+          {(advicePreview(card.message).shortened || card.reason || state.quote) && <details className="advice-detail"><summary>{advicePreview(card.message).shortened ? 'Pełna podpowiedź i powód' : 'Dlaczego ta podpowiedź?'}</summary>{advicePreview(card.message).shortened && <p>{card.message}</p>}{state.quote && <blockquote>„{state.quote}”</blockquote>}{card.reason && <div className="why-line"><ArrowRight size={13}/>{card.reason}</div>}</details>}
         </div>)}
         <div className="card-foot"><span><Check size={13}/> {listening ? 'Nowy sygnał może zastąpić tę podpowiedź.' : 'Krótko. Naturalnie. Do użycia od razu.'}</span><div className="card-actions">{listening && <button className={`auto-archive-toggle ${autoArchive ? 'enabled' : ''}`} onClick={toggleAutoArchive} aria-pressed={autoArchive}>Auto 60 s: {autoArchive ? 'wł.' : 'wył.'}</button>}{listening && activeSuggestion.current && <button onClick={() => { clearTimeout(displayTimer.current); pendingSuggestion.current = null; archiveSuggestion(); }}>Odłóż</button>}<button onClick={() => setExpanded(!expanded)}>{expanded ? 'Mniej' : 'Pokaż kontekst'}<ChevronDown size={14} className={expanded ? 'rotate' : ''}/></button></div></div>
         {expanded && <div className="context-panel">{transcript || interimText ? `${transcript.slice(-1200)} ${interimText}`.trim() : 'Gdy nasłuch jest aktywny, ostatni fragment rozmowy pojawi się tutaj. Nie zapisujemy go po zakończeniu sesji.'}</div>}
       </article>
-      {pastSuggestions.length > 0 && <section className="past-signals" aria-label="Wcześniejsze sygnały"><div className="past-signals-title">Wcześniejsze podpowiedzi · {pastSuggestions.length}</div>{pastSuggestions.map((item, index) => <details className={`past-signal ${item.repeatCount > 1 ? 'is-repeated' : ''}`} key={`${item.topic}-${index}`}><summary><span className="past-signal-text"><strong>{item.repeatCount > 1 ? '↻ POWTÓRZONY' : readableStatus(item)}</strong><span>{item.cards?.[0]?.message}</span></span><ChevronDown size={14}/></summary><div className="past-signal-detail">{item.quote && <blockquote>„{item.quote}”</blockquote>}{item.cards?.[0]?.reason}{item.source?.url && <a className="knowledge-source" href={item.source.url} target="_blank" rel="noopener noreferrer">Sprawdź w bazie eRecruiter ↗</a>}</div></details>)}</section>}
+      {pastSuggestions.length > 0 && <section className="past-signals" aria-label="Wcześniejsze sygnały"><div className="past-signals-title">Wcześniejsze podpowiedzi · {pastSuggestions.length}</div>{pastSuggestions.map((item, index) => <details className={`past-signal ${item.repeatCount > 1 ? 'is-repeated' : ''}`} key={`${item.topic}-${index}`}><summary><span className="past-signal-text"><strong>{item.repeatCount > 1 ? '↻ POWTÓRZONY' : readableStatus(item)}</strong><span>{advicePreview(item.cards?.[0]?.message, 95).text}</span></span><ChevronDown size={14}/></summary><div className="past-signal-detail"><p>{item.cards?.[0]?.message}</p>{item.quote && <blockquote>„{item.quote}”</blockquote>}{item.cards?.[0]?.reason}</div></details>)}</section>}
     </section>
 
     <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
-    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.7</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
-    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div><p>Nie musisz zakładać konta ani wpisywać klucza API. Aplikacja używa kluczy skonfigurowanych po stronie Cloudflare. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p><label className="question-mode"><input type="checkbox" checked={ordinaryQuestions} onChange={(event) => { ordinaryQuestionsRef.current = event.target.checked; setOrdinaryQuestions(event.target.checked); }}/><span>Reaguj także na zwykłe pytania podczas rozmowy</span></label><div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek jest przechowywany jako sekret w Cloudflare, nie trafia do przeglądarki. Tekst rozmowy jest przekazywany do DeepSeek po wykryciu ważnego sygnału lub pytania; dostawcy usług mogą stosować własne zasady retencji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Przy ważnym sygnale coach może wykorzystać pasujące, anonimowe wzorce z wcześniejszych rozmów. Bieżąca rozmowa ma pierwszeństwo. Surowe transkrypcje i dane klientów nie są częścią aplikacji.</span></div><div className="privacy-item"><Sparkles size={17}/><span>Gdy temat pasuje do publicznej bazy wiedzy eRecruiter, serwer pobiera fragment artykułu i pokazuje link do źródła. Ceny i dostępność w pakietach nadal pochodzą z aktualnej oferty.</span></div><div className="privacy-item"><Mic size={17}/><span>Najpierw krótkie fragmenty dźwięku trafiają do Cloudflare Workers AI. Jeśli Cloudflare zawiedzie, aplikacja przełączy się na rozpoznawanie mowy przeglądarki, które może przekazywać audio do swojego dostawcy. Aplikacja nie zapisuje nagrania. Nasłuch działa tylko po naciśnięciu przycisku i zgodzie na mikrofon.</span></div><button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button></section></div>}
+    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.8</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
+    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div>
+      <p>Nie musisz zakładać konta ani wpisywać klucza API. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p>
+      <label className="question-mode"><input type="checkbox" checked={ordinaryQuestions} onChange={(event) => { ordinaryQuestionsRef.current = event.target.checked; setOrdinaryQuestions(event.target.checked); }}/><span>Reaguj także na zwykłe pytania podczas rozmowy</span></label>
+      <div className="privacy-item"><ShieldCheck size={17}/><span>Klucz DeepSeek pozostaje w Cloudflare. Audio trafia do usługi transkrypcji, a ostatni kontekst do DeepSeek po sygnale lub naciśnięciu „Podpowiedz teraz”. Dostawcy mogą stosować własne zasady retencji.</span></div>
+      <div className="privacy-item"><Sparkles size={17}/><span>Coach korzysta z anonimowych analiz wcześniejszych rozmów, nie z surowych transkrypcji. Ceny katalogowe pochodzą wyłącznie z oferty z 01.04.2026. Funkcje i warunki trzeba potwierdzić; publiczna baza wiedzy nie jest pobierana.</span></div>
+      <div className="privacy-item"><Mic size={17}/><span>Cloudflare rozpoznaje krótkie fragmenty audio; po awarii działa zapasowy mechanizm przeglądarki. Aplikacja nie zapisuje nagrania ani historii po zamknięciu karty.</span></div>
+      <div className="diagnostics"><strong>Diagnostyka bieżącej karty (bez treści rozmowy)</strong><span>Fragmenty: {metrics.fragments} · sygnały: {metrics.signals} · analizy: {metrics.analyses}</span><span>Karty: {metrics.shown} · cisza AI: {metrics.quiet} · spóźnione: {metrics.stale} · pominięte: {metrics.skipped} · błędy: {metrics.errors}</span><span>Średni czas transkrypcji: {metrics.asrTimed ? Math.round(metrics.asrMs / metrics.asrTimed / 100) / 10 : '—'} s · odpowiedź AI: {metrics.aiResponses ? Math.round(metrics.aiMs / metrics.aiResponses / 100) / 10 : '—'} s</span></div>
+      <button className="modal-close" onClick={() => setSettingsOpen(false)}>Gotowe</button>
+    </section></div>}
   </main>;
 }
 

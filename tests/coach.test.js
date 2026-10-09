@@ -1,19 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardNextMove, onRequestPost } from '../functions/api/coach.js';
-import { selectHelpArticle } from '../lib/help-center.js';
 
-test('publiczny artykuł trafia do analizy i ma link w odpowiedzi', async () => {
+test('nie pobiera publicznej bazy wiedzy ani nie dodaje jej linku', async () => {
   const previousFetch = globalThis.fetch;
-  const match = selectHelpArticle('Jaką rolę przydzielić managerowi?', 'MANUAL');
+  const fetched = [];
   let aiPrompt = '';
   globalThis.fetch = async (url, options) => {
-    if (String(url).startsWith('https://pomoc.erecruiter.pl/')) {
-      const articleId = match.url.match(/\/articles\/(\d+)/)[1];
-      return new Response(`<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { articleContent: {
-        articleId, title: match.title, blocks: [{ text: 'Manager może oceniać kandydatów w systemie po przydzieleniu odpowiedniej roli.' }],
-      } } } })}</script>`);
-    }
+    fetched.push(String(url));
     aiPrompt = JSON.parse(options.body).messages[1].content;
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
       notify: true, status: 'Manager', quote: null, memory: '',
@@ -28,8 +22,10 @@ test('publiczny artykuł trafia do analizy i ma link w odpowiedzi', async () => 
     const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
     const result = await response.json();
     assert.equal(response.status, 200);
-    assert.match(aiPrompt, /Manager może oceniać kandydatów/);
-    assert.equal(result.source.url, match.url);
+    assert.equal(fetched.length, 1);
+    assert.match(fetched[0], /api\.deepseek\.com/);
+    assert.doesNotMatch(aiPrompt, /PUBLICZNA BAZA WIEDZY|Artykuł:/);
+    assert.equal(result.source, undefined);
   } finally { globalThis.fetch = previousFetch; }
 });
 
@@ -96,5 +92,28 @@ test('pełna odpowiedź o cenie nie jest ucinana po 120 znakach', async () => {
     });
     const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
     assert.equal((await response.json()).cards[0].message, fullAnswer);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test('nowy sygnał potrzeby używa wzorców, ale nie dostaje pełnej oferty', async () => {
+  const previousFetch = globalThis.fetch;
+  let prompt = '';
+  globalThis.fetch = async (_url, options) => {
+    prompt = JSON.parse(options.body).messages[1].content;
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      notify: true, status: 'Potrzeba ATS', quote: null, memory: '',
+      cards: [{ label: 'DOPYTAJ', message: 'Co dziś najbardziej utrudnia pracę?', reason: 'Poznaj potrzebę.', priority: 'HIGH' }],
+    }) } }] }), { status: 200 });
+  };
+  try {
+    const request = new Request('https://sufler-bdm.pages.dev/api/coach', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: 'Potrzebujemy ATS, ale globalnie wdrażamy Workday.', signal: { type: 'NEED', priority: 'HIGH' } }),
+    });
+    const response = await onRequestPost({ request, env: { DEEPSEEK_API_KEY: 'test-key' } });
+    assert.equal(response.status, 200);
+    assert.match(prompt, /Firma może potrzebować ATS lokalnie/);
+    assert.doesNotMatch(prompt, /Multipublikacja Plus|START 249 zł/);
+    assert.ok((await response.json()).timings.aiMs >= 0);
   } finally { globalThis.fetch = previousFetch; }
 });

@@ -63,10 +63,8 @@ Po wdrożeniu stopka pokazuje `v2.5`. Podpowiedź automatycznie przechodzi po 60
 
 Przy ręcznym wgrywaniu do GitHub zachowaj strukturę katalogów: `src/main.jsx`, `src/styles.css` i `functions/api/coach.js` muszą pozostać w swoich folderach. Pliki o tych samych nazwach wrzucone do głównego katalogu repozytorium nie aktualizują aplikacji.
 
-## Wersja 2.6 — publiczna baza wiedzy eRecruiter
+## Wersja 2.8 — szybszy sufler i diagnoza
 
-Aplikacja ma indeks publicznych artykułów z `https://pomoc.erecruiter.pl/pl/` w `lib/help-center-index.js`. Przy pasującym temacie funkcja `functions/api/coach.js` pobiera fragment właściwego artykułu i podaje źródło DeepSeek. Nie potrzeba osobnego klucza API, logowania ani zmian w ustawieniach Cloudflare. Jeśli baza wiedzy chwilowo nie odpowiada, coach korzysta z zapisanej wiedzy ofertowej. Przy wgrywaniu na GitHub dodaj również `lib/help-center.js`, `lib/help-center-index.js` i `scripts/sync-help-center.mjs` w ich folderach. Stopka aplikacji pokaże `v2.6` po wdrożeniu.
+Po wdrożeniu stopka pokazuje `v2.8`. Główna karta ma krótki skrót i rozwijaną pełną odpowiedź; przycisk „Podpowiedz teraz” wykorzystuje ostatni kontekst bez wpisywania tekstu. W ustawieniach są anonimowe liczniki etapów i średnie czasy. Rozszerzono wykrywanie naturalnych obaw, potrzeb i wartości. Skrócono fragmenty audio do około 3 sekund. Wcześniejsze analizy rozmów nadal są w `lib/reference-patterns.js`; ceny katalogowe pozostają w `lib/offer-knowledge.js`.
 
-## Wersja 2.7 — większa czułość na pytania
-
-Po wdrożeniu stopka pokazuje `v2.7`. Aplikacja domyślnie reaguje także na zwykłe pytania z rozmowy, nie tylko na mocne sygnały sprzedażowe. W oknie „Jak to działa” można wyłączyć tę czułość na czas bieżącej karty. Wgraj również zaktualizowane `src/signal-detector.js`, `src/main.jsx` oraz `functions/api/coach.js`. Więcej wykrytych pytań oznacza więcej wywołań DeepSeek.
+Wersja 2.8 **nie korzysta z publicznej bazy wiedzy eRecruiter**. Po ręcznym wgraniu nowej paczki na GitHub usuń ze starego repozytorium `lib/help-center.js`, `lib/help-center-index.js`, `lib/help-center.test.js` oraz `scripts/sync-help-center.mjs`. Samo dodanie plików z ZIP nie usunie wcześniejszych plików w GitHub. Nie usuwaj `lib/offer-knowledge.js` ani `lib/reference-patterns.js`. Po publikacji sprawdź stopkę `v2.8` i diagnostykę w ustawieniach.
