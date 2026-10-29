@@ -78,6 +78,19 @@ test('prośba o test nie jest blokowana obowiązkowymi kryteriami', () => {
   assert.doesNotMatch(result.cards[0].message, /Po czym/);
 });
 
+test('pytanie o dodatkowe koszty nie dostaje ceny abonamentu zamiast odpowiedzi', () => {
+  const result = guardNextMove({
+    signal: { type: 'PRICE', topic: 'extra-costs', intent: 'DIRECT_REQUEST', requestCount: 1 },
+    notify: true,
+    cards: [{ label: '', message: 'START kosztuje 249 zł miesięcznie.', reason: '', priority: 'HIGH' }],
+  });
+  assert.match(result.cards[0].message, /Potwierdzę osobno koszty/);
+  assert.doesNotMatch(result.cards[0].message, /249 zł/);
+  const module = guardNextMove({ signal: { type: 'PRICE', topic: 'module-price', intent: 'DIRECT_REQUEST' }, cards: [], notify: false });
+  assert.match(module.cards[0].message, /cenę tego modułu/);
+  assert.doesNotMatch(module.cards[0].message, /START/);
+});
+
 test('cena jest jednym pełnym, szybkim do odczytania zdaniem', async () => {
   const previousFetch = globalThis.fetch;
   const fullAnswer = 'START kosztuje 249 zł netto miesięcznie w promocji, później 299 zł. CORE zaczyna się od 999 zł. Ostateczny wariant dobierzemy do liczby użytkowników i potrzebnych funkcji.';

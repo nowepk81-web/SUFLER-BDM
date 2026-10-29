@@ -14,16 +14,42 @@ export function detectSignal(utterance) {
     return signal('BUYING_SIGNAL', 'HIGH', 'COMMITMENT', 'decision');
   }
 
-  const priceQuestion = found(text, /\b(ile (to|system|e ?recruiter|abonament)? ?kosztuje|jaka (jest |bedzie )?cena|jaki (jest )?koszt|ile (za|placimy)|za ile|kwota abonamentu)\b/) || found(text, /\b(czy|prosze|chce|poprosze|mozna|moglibyscie)\b.{0,90}\b(cen\w*|koszt\w*|wycen\w*)\b/);
+  const priceQuestion = found(text, /\b(ile (to|system|e ?recruiter|abonament|taki modul|ten modul)? ?kosztuje|jaka (jest |bedzie )?cena|jaki (jest )?koszt|ile (za|placimy)|za ile|kwota abonamentu)\b/) ||
+    found(text, /\b(czy|prosze|chce|poprosze|mozna|moglibyscie|nalegam|nalegala|potrzebuje informacji)\b.{0,100}\b(cen\w*|koszt\w*|wycen\w*)\b/) ||
+    found(text, /\b(dodatkow\w*|jednorazow\w*).{0,40}\b(koszt\w*|oplat\w*)\b.{0,45}\b(wdro\w*|uruchom\w*|aktywac\w*)\b/);
   const priceObjection = found(text, /\b(za drogo|droz[sz]\w*|cena (jest |wydaje sie )?(za )?wysoka|koszt (jest |wydaje sie )?(za )?wysoki|koszty? wdrozenia (sa |jest )?(zbyt |za )?wysok\w*|nie mamy budzetu|nie stac nas)\b/);
   const priceMention = found(text, /\b(cen[ayęieo]?|koszt\w*|abonament\w*|wycen\w*|budzet\w*)\b/);
   const hiringCostOnly = found(text, /\b(wynagrodzen\w*|pensj\w*|zarobk\w*|stawki kandydat\w*|budzet na stanowisk\w*)\b/) && !found(text, /\b(system\w*|e ?recruiter\w*|abonament\w*|ofert[ayę]|wycen\w*)\b/);
   if (priceQuestion || priceObjection || (priceMention && !hiringCostOnly && found(text, /\b(system\w*|e ?recruiter\w*|abonament\w*|ofert[ayę]|wycen\w*)\b/))) {
-    return signal('PRICE', 'HIGH', priceQuestion ? 'DIRECT_REQUEST' : priceObjection ? 'OBJECTION' : 'MENTION', 'price');
+    const topic = found(text, /\b(dodatkow\w*|jednorazow\w*).{0,65}\b(koszt\w*|oplat\w*)\b|\b(koszt\w*|oplat\w*).{0,65}\b(wdro\w*|uruchom\w*|aktywac\w*)\b/) ? 'extra-costs' :
+      found(text, /\bmodul\w*\b/) ? 'module-price' : 'price';
+    return signal('PRICE', 'HIGH', priceQuestion ? 'DIRECT_REQUEST' : priceObjection ? 'OBJECTION' : 'MENTION', topic);
   }
 
   const testRequest = found(text, /\b(chce|chcialabym|chcialbym|mozemy|moge|prosze|poprosze|dostane|otrzymam|czy jest)\b.{0,55}\b(test\w*|przetest\w*|dostep\w* (?:do )?(?:systemu|wersji testowej)|demo)\b|\b(test\w*|przetest\w*)\b.{0,40}\b(chce|mozemy|moge|prosze|poprosze|dostane|otrzymam)\b/);
   if (testRequest) return signal('TEST_OR_DECISION', 'HIGH', 'DIRECT_REQUEST', 'test');
+
+  const testWithoutRecruitment = found(text, /\b(nie (?:bedziemy|mamy|mam).{0,90}rekrutac\w*|brak.{0,40}rekrutac\w*)\b/) &&
+    found(text, /\b(test\w*|potest\w*|przetest\w*|sprawdz\w*)\b/);
+  if (testWithoutRecruitment) return signal('TEST_OR_DECISION', 'HIGH', 'OBJECTION', 'test-timing');
+
+  const trialBillingConcern = found(text, /\b(test\w*|tesc\w*|potest\w*|przetest\w*|dostep\w*|bezplat\w*)\b/) &&
+    found(text, /\b(faktur\w*|subskrypcj\w*|anulow\w*|automatyczn\w*|oplat\w*)\b/);
+  if (trialBillingConcern) return signal('TEST_OR_DECISION', 'HIGH', /\?|\b(czy|jak|kiedy)\b/.test(text) ? 'DIRECT_REQUEST' : 'OBJECTION', 'test-billing');
+
+  // Pozytywna reakcja nie oznacza zgody na wdrożenie, gdy potrzebni są inni.
+  if (found(text, /\b(fajnie|podoba|dobrze wyglada|sensown\w*)\b.{0,100}\b(ale|tylko)\b.{0,130}\b(inn\w*|kierownic\w*|manager\w*|menadzer\w*)\b/)) {
+    return signal('OBJECTION', 'HIGH', 'OBJECTION', 'adoption');
+  }
+
+  if (found(text, /\b(nie potrzebuj\w*|nie widze (?:takiej )?potrzeby)\b/) &&
+      found(text, /\brekrutac\w*\b/)) {
+    return signal('OBJECTION', 'HIGH', 'OBJECTION', 'low-volume-no-need');
+  }
+
+  if (found(text, /\b(przekonan\w*|przekonac)\b/) && found(text, /\b(zarzad\w*|akceptacj\w*|decyzj\w*)\b/)) {
+    return signal('TEST_OR_DECISION', 'HIGH', 'PROCESS_FACT', 'internal-approval');
+  }
 
   const objection = found(text, /\b(nie potrzebujemy|nie jest (to )?problem|mamy to poukladane|to nam niepotrzebne|nie przekonuje|nie zadziala|nie mamy (dzis |dzisiaj |teraz )?czasu na wdrozenie|obawiam sie|watpliwosc\w*|za duzo pracy|nie ma sensu|nie widze wartosci)\b/);
   if (objection) return signal('OBJECTION', 'HIGH', 'OBJECTION', 'objection');
@@ -47,6 +73,9 @@ export function detectSignal(utterance) {
 
   const value = found(text, /\b(to (jest|byloby|brzmi) (dla nas )?(bardzo |naprawde )?(wazne|przydatne|sensownie|swietne|super)|to nam (pomoze|pomogloby|ulatwi|ulatwiloby)|tego (wlasnie )?potrzebujemy|tego nam brakuje|to rozwiazuje|bardzo nam zalezy|przydaloby nam sie|to by mi pomoglo|zabiera (nam )?(bardzo )?duzo czasu|to jest super|podoba (mi|nam) sie|to wszystko (jest|mamy) w jednym miejscu|nie musze (sie zastanawiac|pamietac|myslec)|szybsza obsluga|sporo czasu (to )?(oszczedzi|zaoszczedzi))\b/);
   if (value) return signal('VALUE', 'HIGH', 'VALUE_CLAIM', 'value');
+  if (found(text, /\bnie wyobrazam sobie.{0,60}\bbez systemu\b/)) {
+    return signal('VALUE', 'HIGH', 'VALUE_CLAIM', 'system-worth-it');
+  }
 
   if (found(text, /\b(testowac|przetestowac|kryteria (wyboru|sukcesu)|porownujemy (systemy|ats)|proces decyzyjny)\b/)) {
     return signal('TEST_OR_DECISION', 'MEDIUM', 'MENTION', 'test');
@@ -54,6 +83,16 @@ export function detectSignal(utterance) {
 
   if (found(text, /\b(robimy to recznie|robimy recznie|przepisujemy do excela|wklejamy do excela|w excelu|excel|duzo cv|setki cv|\d{2,4} cv|nie nadazamy|gubimy kandydat\w*|prosimy o usuniecie (maila|cv|danych)|wysylamy (zahaszowane|zaszyfrowane) (maile|cv)|czekam(y)? na informacje|przeciaga (nam )?sie|musze pilnowac)\b/)) {
     return signal('PROCESS_SIGNAL', 'MEDIUM', 'PROCESS_FACT', 'process');
+  }
+  if (found(text, /\b(w zaleznosci od stanowisk\w*|zalezy od stanowisk\w*|rozne stanowisk\w*|inne stanowisk\w*)\b/)) {
+    return signal('PROCESS_SIGNAL', 'MEDIUM', 'PROCESS_FACT', 'role-specific-process');
+  }
+  if (found(text, /\b(wysyl\w*|przesyl\w*|przekaz\w*).{0,75}\b(cv|kandydat\w*|mail\w*|sms\w*)\b|\b(cv|mailowo|mailem|sms\w*).{0,75}\b(wysyl\w*|przesyl\w*|przekaz\w*)\b/)) {
+    return signal('PROCESS_SIGNAL', 'MEDIUM', 'PROCESS_FACT', 'handoff');
+  }
+  if (found(text, /\bkandydat\w*.{0,90}\b(innym projek\w*|innej rekrutacj\w*)\b|\b(innym projek\w*|innej rekrutacj\w*).{0,90}\bkandydat\w*\b/)) {
+    const question = /\?|\b(czy|jak|mozna)\b/.test(text);
+    return signal(question ? 'GENERAL_QUESTION' : 'PROCESS_SIGNAL', question ? 'HIGH' : 'MEDIUM', question ? 'DIRECT_REQUEST' : 'PROCESS_FACT', 'candidate-reuse');
   }
   // ASR often omits the question mark. Catch ordinary questions too, but skip
   // technical small talk; DeepSeek still decides whether the speaker needs help.

@@ -41,3 +41,28 @@ test('wykrywa naturalne sygnały spotkania bez zakładania mówcy', () => {
   assert.equal(detectSignal('W Excelu zbieramy status procesu').type, 'PROCESS_SIGNAL');
   assert.equal(detectSignal('Mamy globalnie Workday jako ATS').type, 'OBJECTION');
 });
+
+test('rozpoznaje sytuacje powtarzające się w spotkaniach zespołu', () => {
+  assert.deepEqual(detectSignal('Nie będziemy mieli teraz rekrutacji, więc ciężko mi będzie potestować system.'), {
+    type: 'TEST_OR_DECISION', priority: 'HIGH', intent: 'OBJECTION', topic: 'test-timing',
+  });
+  assert.equal(detectSignal('Czy po teście automatycznie przyjdzie nam faktura?').topic, 'test-billing');
+  assert.equal(detectSignal('Wszystko fajnie wygląda, ale inni kierownicy też muszą z tego korzystać.').topic, 'adoption');
+  assert.equal(detectSignal('Robię wstępną analizę w zależności od stanowiska.').topic, 'role-specific-process');
+  assert.equal(detectSignal('Wybrane CV wysyłam mailem do kierowników.').topic, 'handoff');
+  assert.equal(detectSignal('Na razie nie mamy rekrutacji.'), null);
+});
+
+test('odróżnia konkretną decyzję od dalszej prezentacji i małą skalę od braku wartości', () => {
+  assert.deepEqual(detectSignal('Będę nalegała na informację o cenie do budżetu.'), {
+    type: 'PRICE', priority: 'HIGH', intent: 'DIRECT_REQUEST', topic: 'price',
+  });
+  assert.equal(detectSignal('Ile taki moduł kosztuje?').type, 'PRICE');
+  assert.equal(detectSignal('Ile taki moduł kosztuje?').topic, 'module-price');
+  assert.equal(detectSignal('Czy są dodatkowe koszty wdrożenia?').topic, 'extra-costs');
+  assert.equal(detectSignal('Robimy mało rekrutacji i nie potrzebuję dodatkowych narzędzi.').topic, 'low-volume-no-need');
+  assert.equal(detectSignal('Mamy mało rekrutacji, ale nie wyobrażam sobie pracować bez systemu.').topic, 'system-worth-it');
+  assert.equal(detectSignal('Jesteśmy przekonani, ale musimy przekonać zarząd.').topic, 'internal-approval');
+  assert.equal(detectSignal('Ten kandydat byłby dobry w innym projekcie.').topic, 'candidate-reuse');
+  assert.equal(detectSignal('Czy tego kandydata można użyć w innym projekcie?').type, 'GENERAL_QUESTION');
+});

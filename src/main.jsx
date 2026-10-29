@@ -465,7 +465,7 @@ function App() {
 
     <section className="quick-input"><div className="quick-title"><span>ALBO</span><b>Potrzebujesz podpowiedzi od razu?</b></div><div className="input-row"><input value={manualTopic} onChange={(e) => setManualTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && manualPrompt()} placeholder="Wpisz hasło lub krótki cytat klienta…"/><button onClick={() => manualPrompt()} disabled={!manualTopic.trim()}>Podpowiedz <ArrowRight size={15}/></button></div><div className="chips">{['Cena', 'Test', 'Selekcja', 'Manager', 'RODO'].map((topic) => <button key={topic} onClick={() => manualPrompt(topic)}>{topic}</button>)}</div></section>
 
-    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.9</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
+    <footer className="footer"><div className="footer-left"><span className="footer-logo">BDM / COACH · v2.11</span><span>zbudowany dla lepszych rozmów</span></div><button onClick={() => setSettingsOpen(true)}><CircleHelp size={14}/> Jak to działa</button></footer>
     {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-modal" onClick={(e) => e.stopPropagation()}>
       <div className="modal-head"><div><span className="section-kicker">USTAWIENIA I PRYWATNOŚĆ</span><h3>Gotowy od razu po otwarciu.</h3></div><button className="icon-button" onClick={() => setSettingsOpen(false)}><X size={18}/></button></div>
       <p>Nie musisz zakładać konta ani wpisywać klucza API. Przy pierwszym uruchomieniu zezwól na dostęp do mikrofonu.</p>

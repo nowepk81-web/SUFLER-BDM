@@ -72,3 +72,11 @@ Wersja 2.9 **nie korzysta z publicznej bazy wiedzy eRecruiter**. Po ręcznym wgr
 ## Wersja 2.9 — odpowiedź do odczytania jednym spojrzeniem
 
 Po wdrożeniu stopka pokazuje `v2.9`. Główna karta zawiera samo pytanie, zdanie lub krótką instrukcję, bez ukrytej dłuższej odpowiedzi i bez etykiety „ważny sygnał”. Starsze sugestie pozostają w zwartej historii. Wgraj całą zawartość paczki v2.9, zachowując foldery `src`, `functions`, `lib`, `public` i `tests`.
+
+## Wersja 2.10 — analogie z wcześniejszych rozmów
+
+Po wdrożeniu stopka pokazuje `v2.10`. Zmieniły się pliki `src/signal-detector.js`, `functions/api/coach.js` i `lib/reference-patterns.js` wraz z testami i opisem. Przy ręcznym wgrywaniu na GitHub zachowaj ich katalogi; po commicie sprawdź powodzenie nowego wdrożenia Cloudflare. Surowych plików z katalogu transkrypcji nie wgrywaj do repozytorium.
+
+## Wersja 2.11 — kolejne anonimowe wzorce rozmów
+
+Po wdrożeniu stopka pokazuje `v2.11`. Wgraj rozpakowaną zawartość paczki do katalogu głównego repozytorium, zachowując foldery. Nowe wzorce są w `lib/reference-patterns.js`, wykrywanie w `src/signal-detector.js`, a zabezpieczenie odpowiedzi cenowych w `functions/api/coach.js`. Surowe transkrypcje pozostają wyłącznie lokalnie.
